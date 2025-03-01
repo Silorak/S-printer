@@ -105,6 +105,7 @@ class PrinterService {
                 'vendor' => $vendor,
                 'detected_name' => $vendorName,
                 'description' => Config::$descriptions[$ip] ?? '',
+                'purchase_url' => Config::$purchaseUrls[$ip] ?? '',
                 'last_updated' => time()
             ];
             
@@ -130,6 +131,7 @@ class PrinterService {
             '/^(INTEGER|Counter32|Gauge32|Timeticks):\s*/i'
         ], '', $value));
         
+        // Handle potentially unsafe values
         return is_numeric($clean) ? (float)$clean : htmlspecialchars($clean, ENT_QUOTES, 'UTF-8');
     }
     
