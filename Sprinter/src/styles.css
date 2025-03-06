@@ -7,11 +7,15 @@
     .light-theme .header {
         background: rgba(233, 229, 207, 0.95);
     }
-}.placeholder-button {
+}
+
+.placeholder-button {
     /* Take up same space as the button but invisible */
     display: inline-block;
     width: 80px; /* Approximately the width of the button */
-}.buy-button:hover {
+}
+
+.buy-button:hover {
     transform: translateY(-1px);
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     filter: brightness(110%);
@@ -24,7 +28,9 @@
 .light-theme .buy-button:hover {
     filter: brightness(105%);
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-}/* Adjustments for light theme */
+}
+
+/* Adjustments for light theme */
 .light-theme {
     /* Custom styles for light theme */
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
@@ -68,11 +74,6 @@
     background: rgba(0, 0, 0, 0.08);
 }
 
-.light-theme .theme-toggle-track {
-    background: rgba(0, 0, 0, 0.05);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-}
-
 .light-theme .buy-button {
     background-color: var(--primary);
     color: white;
@@ -89,90 +90,9 @@
 
 .light-theme .cube:hover {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-}.theme-switch-wrapper {
-    margin-left: 0.5rem;
-    display: flex;
-    align-items: center;
 }
 
-.theme-toggle {
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: pointer;
-    outline: none;
-    transition: all 0.3s var(--ease);
-    flex-shrink: 0;
-    position: relative;
-    width: 48px;
-    height: 24px;
-}
-
-.theme-toggle:focus {
-    outline: none;
-}
-
-.theme-toggle:focus .theme-toggle-track {
-    box-shadow: 0 0 0 2px var(--primary);
-}
-
-.theme-toggle-track {
-    background-color: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
-    height: 24px;
-    width: 48px;
-    position: relative;
-    transition: background-color 0.3s var(--ease);
-    overflow: hidden;
-}
-
-.theme-toggle-thumb {
-    background-color: var(--primary);
-    border-radius: 50%;
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    height: 18px;
-    width: 18px;
-    transform: translateX(0);
-    transition: transform 0.3s var(--ease), background-color 0.3s var(--ease);
-    z-index: 2;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-}
-
-.light-theme .theme-toggle-thumb {
-    transform: translateX(24px);
-    background-color: var(--primary);
-}
-
-.theme-toggle-icon {
-    position: absolute;
-    top: 4px;
-    height: 16px;
-    width: 16px;
-    transition: opacity 0.3s ease;
-    color: var(--fg);
-    z-index: 1; /* Below thumb */
-}
-
-.theme-toggle-icon.sun {
-    right: 4px;
-    opacity: 0;
-}
-
-.theme-toggle-icon.moon {
-    left: 4px;
-    opacity: 1;
-}
-
-.light-theme .theme-toggle-icon.sun {
-    opacity: 1;
-}
-
-.light-theme .theme-toggle-icon.moon {
-    opacity: 0;
-}:root {
+:root {
     /* Everforest Dark Theme (Default) */
     --bg: #2d353b;
     --fg: #d3c6aa;
@@ -502,7 +422,7 @@ h1 {
         order: 3;
     }
     
-    .theme-switch-wrapper {
+    .theme-toggle-container {
         position: absolute;
         top: 0.5rem;
         right: 1rem;
@@ -579,3 +499,462 @@ h1 {
 .cube:nth-child(3) { animation-delay: 0.15s; }
 .cube:nth-child(4) { animation-delay: 0.2s; }
 .cube:nth-child(5) { animation-delay: 0.25s; }
+
+/* Additional styles for the new printer discovery system */
+
+.refresh-panel {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--cube-bg);
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.refresh-button {
+    display: inline-block;
+    background-color: var(--primary);
+    color: var(--bg);
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    text-decoration: none;
+    font-weight: 600;
+    transition: all 0.3s var(--ease);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.refresh-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+    filter: brightness(110%);
+}
+
+.last-refresh {
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+/* Status indicator animation */
+.status-indicator.online {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 6px rgba(76, 175, 80, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    }
+}
+
+/* Error message styling */
+.error-message {
+    background: rgba(244, 67, 54, 0.1);
+    border-left: 4px solid #F44336;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+}
+
+/* Debug panel */
+.debug-panel {
+    grid-column: 1 / -1;
+    background: var(--embed-bg);
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-family: monospace;
+    font-size: 0.9rem;
+    overflow-x: auto;
+    display: none; /* Hidden by default */
+}
+
+.debug-toggle {
+    cursor: pointer;
+    text-decoration: underline;
+    color: var(--primary);
+}
+
+/* Loading animation */
+.loading {
+    text-align: center;
+    padding: 2rem;
+}
+
+.spinner {
+    display: inline-block;
+    width: 50px;
+    height: 50px;
+    border: 3px solid rgba(127, 187, 179, 0.3);
+    border-radius: 50%;
+    border-top-color: var(--primary);
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Media query adjustments for refresh panel */
+@media (max-width: 768px) {
+    .refresh-panel {
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: flex-start;
+    }
+    
+    .last-refresh {
+        align-self: flex-end;
+    }
+}
+
+/* Custom Theme Toggle CSS */
+.theme-toggle-container {
+    display: flex;
+    align-items: center;
+    margin-left: 0.5rem;
+}
+
+.theme-toggle {
+    position: relative;
+    width: 60px;
+    height: 30px;
+    border-radius: 15px;
+    background: var(--cube-bg);
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    outline: none;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s var(--ease);
+    overflow: hidden;
+}
+
+.theme-toggle:focus {
+    box-shadow: 0 0 0 2px var(--primary), inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Toggle knob */
+.theme-toggle-knob {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 24px;
+    height: 24px;
+    background: var(--primary);
+    border-radius: 50%;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    transition: transform 0.3s var(--ease);
+    z-index: 10;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Sun and moon icons */
+.theme-toggle-sun, .theme-toggle-moon {
+    position: absolute;
+    top: 6px;
+    width: 18px;
+    height: 18px;
+    transition: opacity 0.3s var(--ease);
+    color: var(--fg);
+}
+
+.theme-toggle-sun {
+    right: 6px;
+    opacity: 0.4;
+}
+
+.theme-toggle-moon {
+    left: 6px;
+    opacity: 1;
+}
+
+/* Light theme adjustments */
+.light-theme .theme-toggle {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.light-theme .theme-toggle-knob {
+    transform: translateX(30px);
+}
+
+.light-theme .theme-toggle-sun {
+    opacity: 1;
+}
+
+.light-theme .theme-toggle-moon {
+    opacity: 0.4;
+}
+
+/* Small animation on hover */
+.theme-toggle:hover .theme-toggle-knob {
+    transform: scale(1.05) translateX(0);
+}
+
+.light-theme .theme-toggle:hover .theme-toggle-knob {
+    transform: scale(1.05) translateX(30px);
+}
+
+/* Optional: Add these if you want a transition effect on the background too */
+.theme-toggle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(55, 64, 69, 0.5), rgba(55, 64, 69, 0.8));
+    border-radius: 15px;
+    transition: opacity 0.3s var(--ease);
+    opacity: 1;
+}
+
+.light-theme .theme-toggle::before {
+    opacity: 0;
+}
+
+.theme-toggle::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(to right, rgba(248, 240, 220, 0.8), rgba(248, 240, 220, 0.5));
+    border-radius: 15px;
+    transition: opacity 0.3s var(--ease);
+    opacity: 0;
+}
+
+.light-theme .theme-toggle::after {
+    opacity: 1;
+}
+
+/* Style for no data message */
+.no-data-message {
+    font-style: italic;
+    padding: 0.5rem 0;
+    color: #888;
+    background-color: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+    text-align: center;
+    margin: 0.75rem 0;
+    border: 1px dashed rgba(0, 0, 0, 0.1);
+}
+
+/* Ink Fluid Logo Animation */
+.ink-logo {
+    position: relative;
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    background: transparent;
+    border: 2px solid var(--primary);
+    overflow: hidden;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+}
+
+.ink-bubble {
+    position: absolute;
+    border-radius: 50%;
+    opacity: 0.8;
+    animation: float 4s infinite ease-in-out;
+}
+
+.ink-bubble:nth-child(1) {
+    background-color: var(--primary);
+    width: 28px;
+    height: 28px;
+    left: 5px;
+    top: 10px;
+    animation-delay: 0s;
+}
+
+.ink-bubble:nth-child(2) {
+    background-color: var(--cyan);
+    width: 20px;
+    height: 20px;
+    right: 8px;
+    top: 12px;
+    animation-delay: 0.5s;
+}
+
+.ink-bubble:nth-child(3) {
+    background-color: var(--magenta);
+    width: 15px;
+    height: 15px;
+    left: 15px;
+    bottom: 6px;
+    animation-delay: 1s;
+}
+
+.ink-bubble:nth-child(4) {
+    background-color: var(--yellow);
+    width: 12px;
+    height: 12px;
+    right: 8px;
+    bottom: 10px;
+    animation-delay: 1.5s;
+}
+
+.ink-wave {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 10px;
+    background-color: var(--primary);
+    opacity: 0.8;
+    animation: wave 3s infinite ease-in-out;
+}
+
+.ink-wave::before {
+    content: '';
+    position: absolute;
+    top: -5px;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    background-color: var(--primary);
+    border-radius: 50%;
+    opacity: 0.6;
+    animation: wave-top 3s infinite ease-in-out;
+}
+
+@keyframes float {
+    0% {
+        transform: translateY(0) translateX(0);
+    }
+    25% {
+        transform: translateY(-3px) translateX(2px);
+    }
+    50% {
+        transform: translateY(0) translateX(5px);
+    }
+    75% {
+        transform: translateY(3px) translateX(2px);
+    }
+    100% {
+        transform: translateY(0) translateX(0);
+    }
+}
+
+@keyframes wave {
+    0%, 100% {
+        height: 10px;
+    }
+    50% {
+        height: 15px;
+    }
+}
+
+@keyframes wave-top {
+    0%, 100% {
+        transform: scale(1, 1);
+    }
+    50% {
+        transform: scale(1.1, 0.9);
+    }
+}
+
+/* Add these styles to your existing stylesheet for offline printer support */
+
+/* Status indicator for offline printers */
+.status-indicator.offline {
+    background-color: #F44336; /* Red */
+    box-shadow: 0 0 5px rgba(244, 67, 54, 0.5);
+    animation: pulse-offline 2s infinite ease-in-out;
+}
+
+/* Offline printer cube styling */
+.offline-cube {
+    opacity: 0.85;
+    position: relative;
+}
+
+.offline-cube::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+        -45deg,
+        rgba(244, 67, 54, 0.05),
+        rgba(244, 67, 54, 0.05) 10px,
+        transparent 10px,
+        transparent 20px
+    );
+    border-radius: 12px;
+    pointer-events: none;
+}
+
+/* Offline message styling */
+.offline-message {
+    background-color: rgba(244, 67, 54, 0.1);
+    color: #F44336;
+    padding: 0.75rem;
+    margin: 0.75rem 0;
+    border-radius: 4px;
+    text-align: center;
+    font-weight: 500;
+    border: 1px dashed rgba(244, 67, 54, 0.3);
+}
+
+/* Animation for offline status indicator */
+@keyframes pulse-offline {
+    0% {
+        box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 6px rgba(244, 67, 54, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
+    }
+}
+
+/* Add these styles to the end of your styles.css file */
+
+/* No Results Message Styling */
+.no-results {
+    text-align: center;
+    background: var(--cube-bg);
+    border-radius: 12px;
+    padding: 2rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    animation: fade-in 0.5s var(--ease) forwards;
+    border: 2px dashed rgba(127, 187, 179, 0.4);
+    margin: 2rem auto;
+    max-width: 400px;
+}
+
+.no-results .info-item {
+    margin: 1rem 0;
+}
+
+.no-results .info-item strong {
+    color: var(--primary);
+    font-size: 1.2rem;
+    display: block;
+    margin-bottom: 0.5rem;
+}
+
+.no-results .info-item p {
+    margin: 0.5rem 0;
+    line-height: 1.5;
+}
+
+.light-theme .no-results {
+    border: 2px dashed rgba(141, 161, 1, 0.3);
+}

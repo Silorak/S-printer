@@ -43,10 +43,31 @@ function setupSearch() {
     const searchInput = document.getElementById('printerSearch');
     if (!searchInput) return;
     
+    // Create "No Results" element once
+    const noResultsElement = document.createElement('div');
+    noResultsElement.className = 'cube no-results';
+    noResultsElement.innerHTML = `
+        <div class="info-item">
+            <strong>No printers found</strong>
+            <p>No printers match your search criteria.</p>
+            <p>Try using different keywords or clear the search.</p>
+        </div>
+    `;
+    noResultsElement.style.display = 'none'; // Hide initially
+    
+    // Add to container after page loads
+    const container = document.querySelector('.container');
+    if (container) {
+        container.appendChild(noResultsElement);
+    }
+    
     searchInput.addEventListener('input', function(e) {
         const searchTerm = e.target.value.toLowerCase();
         const container = document.querySelector('.container');
-        const cubes = Array.from(container.getElementsByClassName('cube'));
+        const cubes = Array.from(container.getElementsByClassName('cube')).filter(cube => !cube.classList.contains('no-results'));
+        
+        // Count visible cubes to check if we need to show "no results"
+        let visibleCount = 0;
         
         // Sort cubes based on match relevance
         cubes.sort((a, b) => {
@@ -62,7 +83,21 @@ function setupSearch() {
             
             cube.style.display = hasMatch ? 'block' : 'none';
             cube.style.order = hasMatch ? '0' : '1';
+            
+            if (hasMatch) visibleCount++;
         });
+        
+        // Show/hide no results message
+        if (searchTerm !== '' && visibleCount === 0) {
+            // Position it in the middle by setting grid-column
+            noResultsElement.style.display = 'block';
+            noResultsElement.style.gridColumn = '1 / -1'; // Span all columns
+            noResultsElement.style.justifySelf = 'center';
+            noResultsElement.style.maxWidth = '400px';
+            noResultsElement.style.margin = '0 auto';
+        } else {
+            noResultsElement.style.display = 'none';
+        }
         
         // Force grid layout update
         container.style.display = 'none';
