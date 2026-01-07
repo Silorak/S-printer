@@ -1,0 +1,151 @@
+/*
+ * Sprinter - Base Stylesheet
+ * 
+ * Contains:
+ * - CSS Reset/Fallbacks
+ * - Theme Variables (Dark/Light)
+ * - Basic Element Styles
+ */
+
+/* ==================== FALLBACKS ==================== */
+
+@supports not (backdrop-filter: blur(6px)) {
+    .header {
+        background: rgba(55, 64, 69, 0.95);
+    }
+
+    .light-theme .header {
+        background: rgba(233, 229, 207, 0.95);
+    }
+}
+
+/* ==================== THEME VARIABLES ==================== */
+
+:root {
+    /* Everforest Dark Theme (Default) */
+    --bg: #2d353b;
+    --fg: #d3c6aa;
+    --primary: #7fbbb3;
+    --secondary: #d699b6;
+    --cube-bg: #475258;
+    --black: #4b565c;
+    --cyan: #7fbbb3;
+    --magenta: #d699b6;
+    --yellow: #dbbc7f;
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --embed-bg: #3a4248;
+    --header-bg: #374045;
+    --header-border: #475258;
+    --border: rgba(127, 187, 179, 0.3);
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --text-secondary: rgba(211, 198, 170, 0.7);
+}
+
+/* Everforest Light Theme */
+.light-theme {
+    --bg: #f8f0dc;
+    --fg: #5c6a72;
+    --primary: #8da101;
+    --secondary: #df69ba;
+    --cube-bg: #e9e5cf;
+    --black: #5c6a72;
+    --cyan: #35a77c;
+    --magenta: #df69ba;
+    --yellow: #dfa000;
+    --embed-bg: #e6e2d0;
+    --header-bg: #e9e5cf;
+    --header-border: #d8d3c0;
+    --border: rgba(141, 161, 1, 0.3);
+    --input-bg: rgba(0, 0, 0, 0.03);
+    --text-secondary: rgba(92, 106, 114, 0.7);
+}
+
+/* ==================== RESET & BASE ==================== */
+
+html {
+    background: var(--bg);
+    min-height: 100%;
+}
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    margin: 0;
+    padding: 20px;
+    padding-top: 0;
+    font-family: system-ui, -apple-system, sans-serif;
+    margin-top: 0 !important;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+h1 {
+    text-align: center;
+    margin: 3rem 0rem 2rem 0rem;
+    font-size: 2.5rem;
+    color: var(--primary);
+}
+
+/* ==================== LIGHT THEME OVERRIDES ==================== */
+
+.light-theme .header {
+    background: rgba(233, 229, 207, 0.85);
+    backdrop-filter: blur(6px);
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.1);
+    background: linear-gradient(to right,
+            rgba(233, 229, 207, 0.9),
+            rgba(233, 229, 207, 0.7));
+}
+
+.light-theme .site-name {
+    color: var(--primary);
+}
+
+.light-theme .site-subtitle {
+    color: var(--fg);
+}
+
+.light-theme #printerSearch {
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    color: var(--fg);
+}
+
+.light-theme #printerSearch::placeholder {
+    color: rgba(92, 106, 114, 0.6);
+}
+
+.light-theme #printerSearch:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(141, 161, 1, 0.2);
+}
+
+.light-theme #printerSearch:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.light-theme .buy-button {
+    background-color: var(--primary);
+    color: white;
+}
+
+.light-theme .buy-button:hover {
+    filter: brightness(105%);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.light-theme .cube {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.light-theme .cube:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Autofill styles for light theme */
+.light-theme input:-webkit-autofill,
+.light-theme input:-webkit-autofill:hover,
+.light-theme input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 30px #f1efe3 inset !important;
+    -webkit-text-fill-color: #5c6a72 !important;
+}

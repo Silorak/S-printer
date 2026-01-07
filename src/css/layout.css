@@ -1,0 +1,298 @@
+/*
+ * Sprinter - Layout Stylesheet
+ * 
+ * Contains:
+ * - Header & Navigation
+ * - Main Layout Structure
+ * - Floor Sidebar
+ * - Container Grid
+ */
+
+/* ==================== HEADER ==================== */
+
+.header {
+    background: linear-gradient(to right,
+            rgba(55, 64, 69, 0.6),
+            rgba(55, 64, 69, 0.4));
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(8px);
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.1);
+    padding: 0.3rem 1.5rem;
+    margin: 0;
+    width: 100%;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    box-sizing: border-box;
+}
+
+.logo-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-shrink: 0;
+    margin-right: auto;
+}
+
+.logo-img {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--primary);
+}
+
+.brand-text {
+    line-height: 1.2;
+}
+
+.site-name {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.site-subtitle {
+    font-size: 0.75rem;
+    color: var(--fg);
+    opacity: 0.8;
+    letter-spacing: 0.5px;
+}
+
+.search-container {
+    display: flex;
+    justify-content: center;
+    flex-grow: 1;
+    margin: 0 1rem;
+    position: relative;
+    max-width: 400px;
+}
+
+#printerSearch {
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 20px;
+    padding: 0.5rem 1.5rem;
+    color: var(--fg);
+    width: 100%;
+    min-width: 180px;
+    transition: all 0.3s var(--ease);
+}
+
+#printerSearch::placeholder {
+    color: rgba(211, 198, 170, 0.6);
+}
+
+#printerSearch:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(127, 187, 179, 0.2);
+}
+
+#printerSearch:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+}
+
+/* Header Controls - groups settings button and theme toggle */
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.placeholder-button {
+    display: inline-block;
+    width: 80px;
+}
+
+/* ==================== MAIN LAYOUT WITH SIDEBAR ==================== */
+
+.main-layout {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 200px);
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+/* Content With Sidebar - flex row for sidebar + cubes */
+.content-with-sidebar {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+/* Floor Sidebar */
+.floor-sidebar {
+    position: sticky;
+    top: 80px;
+    width: 160px;
+    min-width: 160px;
+    max-height: calc(100vh - 100px);
+    padding: 1rem 1rem 0 0.5rem;
+    flex-shrink: 0;
+    align-self: flex-start;
+    border-right: 1px solid rgba(127, 187, 179, 0.2);
+}
+
+.floor-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.floor-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--fg);
+    transition: all 0.2s;
+    font-size: 0.9rem;
+    text-align: left;
+}
+
+.floor-item:hover {
+    background: rgba(127, 187, 179, 0.1);
+}
+
+.floor-item.active {
+    background: rgba(127, 187, 179, 0.2);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+
+.floor-icon {
+    font-size: 1rem;
+}
+
+.floor-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Content Area - for backwards compatibility */
+.content-area {
+    flex: 1;
+    min-width: 0;
+    padding-left: 1rem;
+}
+
+/* ==================== CONTAINER GRID ==================== */
+
+.container {
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr));
+    flex: 1;
+    min-width: 0;
+    padding: 1rem;
+}
+
+/* ==================== REFRESH PANEL ==================== */
+
+.refresh-panel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--cube-bg);
+    border-radius: 8px;
+}
+
+.refresh-button {
+    background: var(--primary);
+    color: var(--bg);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.3s var(--ease);
+}
+
+.refresh-button:hover {
+    filter: brightness(110%);
+    transform: translateY(-1px);
+}
+
+.last-refresh {
+    opacity: 0.7;
+    font-size: 0.85rem;
+}
+
+/* ==================== EMPTY STATE BOX ==================== */
+
+.empty-state-box {
+    background: var(--cube-bg);
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 2rem;
+    text-align: center;
+    max-width: 400px;
+    width: fit-content;
+    height: fit-content;
+    margin: 3rem auto;
+    grid-column: 1 / -1;
+    justify-self: center;
+    align-self: start;
+}
+
+.empty-state-box strong {
+    display: block;
+    color: var(--primary);
+    font-size: 1.1rem;
+    margin-bottom: 0.5rem;
+}
+
+.empty-state-box p {
+    color: var(--text-secondary);
+    margin: 0.3rem 0;
+    font-size: 0.9rem;
+}
+
+/* ==================== DEBUG PANEL ==================== */
+
+.debug-panel {
+    grid-column: 1 / -1;
+    background: var(--embed-bg);
+    padding: 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-family: monospace;
+    font-size: 0.9rem;
+    overflow-x: auto;
+    display: none;
+}
+
+.debug-panel.visible {
+    display: block;
+}
+
+/* Error message styling */
+.error-message {
+    background: rgba(244, 67, 54, 0.1);
+    border-left: 4px solid #F44336;
+    padding: 1rem;
+    margin: 1rem 0;
+    border-radius: 4px;
+}
