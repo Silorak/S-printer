@@ -99,22 +99,72 @@ try {
             break;
 
         case 'export_printers':
-            // Action: Get all printers for export
+            // Action: Export all printers AND floors for complete backup
             $printers = $db->getPrinters();
-            sendResponse($printers);
+            $floors = $db->getFloors();
+            $settings = $db->getSettings();
+            
+            sendResponse([
+                'version' => 1,  // Export format version for future compatibility
+                'printers' => $printers,
+                'floors' => $floors,
+                'settings' => $settings,
+                'exported_at' => date('Y-m-d H:i:s')
+            ]);
             break;
 
         case 'import_printers':
-            // Action: Import printers from JSON
-            if (empty($input['printers']) || !is_array($input['printers'])) {
+            // Action: Import printers and floors from JSON
+            // Support both new format (with floors) and old format (printers only)
+            
+            // Handle old format (array of printers) or new format (object with printers key)
+            $printers = [];
+            $floors = [];
+            $settings = [];
+            
+            if (isset($input['printers']) && is_array($input['printers'])) {
+                // New format with structure
+                $printers = $input['printers'];
+                $floors = $input['floors'] ?? [];
+                $settings = $input['settings'] ?? [];
+            } elseif (is_array($input) && !empty($input) && isset($input[0]['ip'])) {
+                // Old format: direct array of printers
+                $printers = $input;
+            } else {
                 sendError('Invalid data format');
             }
-
+            
             $count = 0;
+            $floorCount = 0;
             $errors = [];
-
-            foreach ($input['printers'] as $printer) {
+            $floorIdMap = []; // Maps old floor IDs to new floor IDs
+            
+            // First, import floors and build ID mapping
+            foreach ($floors as $floor) {
+                if (empty($floor['name'])) continue;
+                
+                $oldId = $floor['id'] ?? null;
+                
+                // Try to add the floor
+                $newId = $db->addFloor($floor['name'], (int)($floor['sort_order'] ?? 0));
+                
+                if ($newId !== false && $oldId !== null) {
+                    $floorIdMap[$oldId] = $newId;
+                    $floorCount++;
+                }
+            }
+            
+            // Then, import printers with updated floor IDs
+            foreach ($printers as $printer) {
                 if (empty($printer['ip'])) continue;
+                
+                // Map old floor_id to new floor_id if applicable
+                if (!empty($printer['floor_id']) && isset($floorIdMap[$printer['floor_id']])) {
+                    $printer['floor_id'] = $floorIdMap[$printer['floor_id']];
+                } elseif (!empty($printer['floor_id'])) {
+                    // Floor doesn't exist in import, set to null
+                    $printer['floor_id'] = null;
+                }
 
                 // Check if exists
                 $existing = $db->getPrinterByIp($printer['ip']);
@@ -135,8 +185,19 @@ try {
                     }
                 }
             }
+            
+            // Import settings if provided
+            foreach ($settings as $key => $value) {
+                if (in_array($key, ['hide_ip', 'show_serial'])) {
+                    $db->setSetting($key, (string)$value);
+                }
+            }
 
-            sendResponse(['count' => $count, 'errors' => $errors]);
+            sendResponse([
+                'printerCount' => $count, 
+                'floorCount' => $floorCount,
+                'errors' => $errors
+            ]);
             break;
 
         // ==================== FLOOR ENDPOINTS ====================

@@ -103,10 +103,13 @@ function setupSearch() {
     searchInput.addEventListener('input', function (e) {
         const searchTerm = e.target.value.toLowerCase();
         const container = document.querySelector('.container');
-        const cubes = Array.from(container.getElementsByClassName('cube')).filter(cube => !cube.classList.contains('no-results'));
+        const cubes = Array.from(container.getElementsByClassName('cube')).filter(cube =>
+            !cube.classList.contains('no-results') && !cube.classList.contains('floor-empty-state')
+        );
 
         // Count visible cubes to check if we need to show "no results"
-        let visibleCount = 0; // Counter for visible cubes
+        let visibleCount = 0;
+        let delay = 0;
 
         // Sort cubes based on match relevance: exact matches first, then partial, then no match
         cubes.sort((a, b) => {
@@ -122,46 +125,53 @@ function setupSearch() {
             return 0; // Maintain original order if both or neither include the term
         });
 
-        // Reorder and filter cubes based on search term
+        // Reorder and filter cubes based on search term with animations
         cubes.forEach(cube => {
             const cubeText = cube.textContent.toLowerCase();
             const hasMatch = searchTerm === '' || cubeText.includes(searchTerm);
 
-            cube.style.display = hasMatch ? 'flex' : 'none'; // Show/hide cube (use flex to maintain layout)
-            cube.style.order = hasMatch ? '0' : '1'; // Push non-matching cubes to the end
-
-            if (hasMatch) visibleCount++;
+            if (hasMatch) {
+                // Force animation replay: remove class, trigger reflow, then add
+                cube.classList.remove('hidden-by-filter');
+                cube.classList.remove('visible-by-filter');
+                void cube.offsetWidth; // Trigger reflow to reset animation
+                cube.classList.add('visible-by-filter');
+                cube.style.animationDelay = `${delay * 0.05}s`; // Smooth stagger
+                cube.style.order = '0';
+                delay++;
+                visibleCount++;
+            } else {
+                // Hide cube
+                cube.classList.remove('visible-by-filter');
+                cube.classList.add('hidden-by-filter');
+                cube.style.order = '1';
+            }
         });
 
         // Show/hide no results message based on visible count
         if (searchTerm !== '' && visibleCount === 0) {
             noResultsElement.style.display = 'block';
-            noResultsElement.style.gridColumn = '1 / -1'; // Span all columns in the grid
+            noResultsElement.style.gridColumn = '1 / -1';
             noResultsElement.style.justifySelf = 'center';
             noResultsElement.style.maxWidth = '400px';
             noResultsElement.style.margin = '0 auto';
         } else {
             noResultsElement.style.display = 'none';
         }
-
-        // Force grid layout update to re-render items correctly after sorting/filtering
-        container.style.display = 'none';
-        container.offsetHeight; // Trigger reflow
-        container.style.display = 'grid';
     });
 }
 
-/** @type {HTMLElement|null} Modal dialog element */
-const modal = document.getElementById('printerModal');
+/** @type {HTMLElement|null} Modal dialog element for printer add/edit */
+const PrinterModal = document.getElementById('printerModal');
 
 /** @type {HTMLElement|null} Floating Action Button to add printer */
-const addBtn = document.getElementById('addPrinterBtn');
+const AddPrinterBtn = document.getElementById('addPrinterBtn');
 
 /** @type {HTMLElement|null} Close button for modal */
-const closeBtn = document.getElementsByClassName('close-modal')[0];
+const CloseModalBtn = document.getElementsByClassName('close-modal')[0];
 
 /** @type {HTMLFormElement|null} The printer form element */
-const form = document.getElementById('printerForm');
+const PrinterForm = document.getElementById('printerForm');
 
 /**
  * Sets up the modal functionality for adding/editing printers.
@@ -170,24 +180,24 @@ const form = document.getElementById('printerForm');
  * @returns {void}
  */
 function setupModal() {
-    if (!modal || !addBtn || !closeBtn) return;
+    if (!PrinterModal || !AddPrinterBtn || !CloseModalBtn) return;
 
     // Open modal when 'Add Printer' button is clicked
-    addBtn.onclick = function () {
+    AddPrinterBtn.onclick = function () {
         resetForm(); // Clear and reset the form fields
         document.getElementById('modalTitle').textContent = 'Add Printer'; // Set modal title
-        modal.classList.add('show'); // Show the modal
+        PrinterModal.classList.add('show'); // Show the modal
     }
 
     // Close modal when the 'x' button is clicked
-    closeBtn.onclick = function () {
-        modal.classList.remove('show'); // Hide the modal
+    CloseModalBtn.onclick = function () {
+        PrinterModal.classList.remove('show'); // Hide the modal
     }
 
     // Close modal if user clicks outside of the modal content
     window.onclick = function (event) {
-        if (event.target == modal) {
-            modal.classList.remove('show'); // Hide the modal
+        if (event.target == PrinterModal) {
+            PrinterModal.classList.remove('show'); // Hide the modal
         }
     }
 
@@ -204,7 +214,7 @@ function setupModal() {
  * @returns {void}
  */
 function resetForm() {
-    form.reset();
+    PrinterForm.reset();
     document.getElementById('printerId').value = '';
     document.getElementById('ipStatus').textContent = '';
     document.getElementById('ipStatus').className = 'status-text';
@@ -240,7 +250,7 @@ function openEditModal(printer) {
         floorSelect.value = printer.floor_id || '';
     }
 
-    modal.classList.add('show');
+    PrinterModal.classList.add('show');
 }
 
 /**
@@ -297,12 +307,12 @@ async function checkIp() {
  * @returns {void}
  */
 function setupForm() {
-    if (!form) return;
+    if (!PrinterForm) return;
 
-    form.onsubmit = async function (e) {
+    PrinterForm.onsubmit = async function (e) {
         e.preventDefault();
 
-        const formData = new FormData(form);
+        const formData = new FormData(PrinterForm);
         const data = Object.fromEntries(formData.entries());
         const id = document.getElementById('printerId').value;
         const action = id ? 'edit_printer' : 'add_printer';
@@ -317,7 +327,7 @@ function setupForm() {
             const result = await response.json();
 
             if (result.success) {
-                modal.style.display = "none";
+                PrinterModal.classList.remove('show');
                 location.reload(); // Simple reload to show changes
             } else {
                 alert('Error: ' + (result.error || 'Unknown error'));
@@ -365,9 +375,9 @@ async function deletePrinter(id) {
 }
 
 /**
- * Sets up the import/export functionality for printer configurations.
- * Export: Downloads all printers as a JSON file.
- * Import: Uploads a JSON file to add/update printers.
+ * Sets up import/export functionality for printer data backup.
+ * Export includes printers, floors, and settings.
+ * Import supports both new format (with floors) and old format (printers only).
  * @returns {void}
  */
 function setupImportExport() {
@@ -379,7 +389,7 @@ function setupImportExport() {
 
     /**
      * Handles the export button click.
-     * Fetches all printers and downloads them as JSON.
+     * Exports all printers, floors, and settings as JSON.
      */
     exportBtn.onclick = async function () {
         try {
@@ -387,11 +397,15 @@ function setupImportExport() {
             const result = await response.json();
 
             if (result.success) {
+                // Create filename with date
+                const date = new Date().toISOString().slice(0, 10);
+                const filename = `sprinter_backup_${date}.json`;
+
                 const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(result.data, null, 2));
                 const downloadAnchorNode = document.createElement('a');
                 downloadAnchorNode.setAttribute("href", dataStr);
-                downloadAnchorNode.setAttribute("download", "printers_export.json");
-                document.body.appendChild(downloadAnchorNode); // required for firefox
+                downloadAnchorNode.setAttribute("download", filename);
+                document.body.appendChild(downloadAnchorNode);
                 downloadAnchorNode.click();
                 downloadAnchorNode.remove();
             } else {
@@ -413,6 +427,7 @@ function setupImportExport() {
     /**
      * Handles file selection for import.
      * Parses the JSON file and sends it to the API.
+     * Supports both new format (object with printers/floors) and old format (array of printers).
      * @param {Event} event - The file input change event
      */
     importFile.onchange = function (event) {
@@ -422,25 +437,36 @@ function setupImportExport() {
         const reader = new FileReader();
         reader.onload = async function (e) {
             try {
-                const printers = JSON.parse(e.target.result);
+                const data = JSON.parse(e.target.result);
+                let payload;
 
-                if (!Array.isArray(printers)) {
-                    alert('Invalid file format: Expected a list of printers.');
+                // Handle both new format (object) and old format (array)
+                if (Array.isArray(data)) {
+                    // Old format: direct array of printers
+                    payload = { printers: data };
+                } else if (data.printers && Array.isArray(data.printers)) {
+                    // New format: object with printers, floors, settings
+                    payload = data;
+                } else {
+                    alert('Invalid file format: Expected a Sprinter backup file.');
                     return;
                 }
 
                 const response = await fetch('api.php?action=import_printers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ printers: printers })
+                    body: JSON.stringify(payload)
                 });
 
                 const result = await response.json();
 
                 if (result.success) {
-                    let msg = `Imported ${result.data.count} printers successfully.`;
+                    let msg = `Import complete!\n\n`;
+                    msg += `• Printers: ${result.data.printerCount || 0}\n`;
+                    msg += `• Floors: ${result.data.floorCount || 0}`;
+
                     if (result.data.errors && result.data.errors.length > 0) {
-                        msg += `\n\nErrors:\n` + result.data.errors.join('\n');
+                        msg += `\n\nWarnings:\n` + result.data.errors.join('\n');
                     }
                     alert(msg);
                     location.reload();
@@ -448,7 +474,7 @@ function setupImportExport() {
                     alert('Import failed: ' + (result.error || 'Unknown error'));
                 }
             } catch (err) {
-                alert('Error parsing JSON file.');
+                alert('Error parsing JSON file. Please ensure it is a valid Sprinter backup.');
             }
             // Reset file input so same file can be selected again if needed
             importFile.value = '';
@@ -476,14 +502,14 @@ function setupSettings() {
         settingsModal.classList.add('show');
     };
 
-    // Close settings modal
+    // Close settings modal (no reload - use Save buttons)
     if (closeSettingsBtn) {
         closeSettingsBtn.onclick = function () {
             settingsModal.classList.remove('show');
         };
     }
 
-    // Close when clicking outside
+    // Close when clicking outside (no reload - use Save buttons)
     window.addEventListener('click', function (event) {
         if (event.target === settingsModal) {
             settingsModal.classList.remove('show');
@@ -515,6 +541,15 @@ function setupSettings() {
     const saveSettingsBtn = document.getElementById('saveSettingsBtn');
     if (saveSettingsBtn) {
         saveSettingsBtn.onclick = saveDisplaySettings;
+    }
+
+    // Save floors and close (reload page to apply changes)
+    const saveFloorsBtn = document.getElementById('saveFloorsBtn');
+    if (saveFloorsBtn) {
+        saveFloorsBtn.onclick = function () {
+            settingsModal.classList.remove('show');
+            location.reload();
+        };
     }
 }
 
@@ -560,8 +595,7 @@ function setupFloorManagement() {
                     const noFloorsMsg = document.querySelector('.no-floors-msg');
                     if (noFloorsMsg) noFloorsMsg.style.display = 'none';
 
-                    // Reload to update sidebar
-                    location.reload();
+                    // Floor added - no reload, user can add more
                 } else {
                     alert('Error: ' + (result.error || 'Unknown error'));
                 }
@@ -595,7 +629,7 @@ function setupFloorManagement() {
                     const result = await response.json();
 
                     if (result.success) {
-                        location.reload();
+                        // Floor saved - no reload until modal closes
                     } else {
                         alert('Error: ' + (result.error || 'Unknown error'));
                     }
@@ -616,7 +650,7 @@ function setupFloorManagement() {
 
                     if (result.success) {
                         li.remove();
-                        location.reload();
+                        // Floor deleted - no reload until modal closes
                     } else {
                         alert('Error: ' + (result.error || 'Unknown error'));
                     }
@@ -697,22 +731,71 @@ function setupFloorFilter() {
  * @returns {void}
  */
 function setActiveFloor(floorId) {
+    // Clear search input to prevent confusion
+    const searchInput = document.getElementById('printerSearch');
+    if (searchInput) {
+        searchInput.value = '';
+    }
+
+    // Hide search "no results" message
+    const searchNoResults = document.querySelector('.search-no-results');
+    if (searchNoResults) {
+        searchNoResults.style.display = 'none';
+    }
+
     // Update sidebar
     document.querySelectorAll('.floor-item').forEach(item => {
         item.classList.toggle('active', item.dataset.floorId === floorId);
     });
 
-    // Filter cards
-    const cubes = document.querySelectorAll('.cube:not(.no-results)');
+    // Filter cards with smooth animation
+    const cubes = document.querySelectorAll('.cube:not(.no-results):not(.floor-empty-state)');
+    let visibleCount = 0;
+    let delay = 0;
+
     cubes.forEach(cube => {
         const cubeFloorId = cube.dataset.floorId || '';
+        const shouldShow = (floorId === 'all') || (cubeFloorId === floorId);
 
-        if (floorId === 'all') {
-            cube.style.display = 'flex';
+        if (shouldShow) {
+            // Force animation replay: remove class, trigger reflow, then add
+            cube.classList.remove('hidden-by-filter');
+            cube.classList.remove('visible-by-filter');
+            void cube.offsetWidth; // Trigger reflow to reset animation
+            cube.classList.add('visible-by-filter');
+            cube.style.animationDelay = `${delay * 0.08}s`; // Slower stagger
+            delay++;
+            visibleCount++;
         } else {
-            cube.style.display = (cubeFloorId === floorId) ? 'flex' : 'none';
+            // Hide cube
+            cube.classList.remove('visible-by-filter');
+            cube.classList.add('hidden-by-filter');
         }
     });
+
+    // Show/hide floor empty state message
+    let floorEmptyMsg = document.querySelector('.floor-empty-state');
+
+    if (floorId !== 'all' && visibleCount === 0) {
+        // Show empty floor message
+        if (!floorEmptyMsg) {
+            floorEmptyMsg = document.createElement('div');
+            floorEmptyMsg.className = 'empty-state-box floor-empty-state';
+            floorEmptyMsg.innerHTML = `
+                <strong>No printers on this floor</strong>
+                <p>This floor doesn't have any printers assigned yet.</p>
+                <p>Click the <strong>+</strong> button to add a printer, then assign it to this floor.</p>
+            `;
+            const container = document.querySelector('.container');
+            if (container) container.appendChild(floorEmptyMsg);
+        }
+        floorEmptyMsg.style.display = 'block';
+    } else {
+        // Hide empty floor message
+        if (floorEmptyMsg) {
+            floorEmptyMsg.style.display = 'none';
+        }
+    }
 }
 
 // ==================== DISPLAY SETTINGS ====================

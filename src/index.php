@@ -464,6 +464,10 @@ header('Content-Type: text/html; charset=utf-8');
                             <?php if (empty($floors)): ?>
                             <p class="no-floors-msg">No floors configured yet.</p>
                             <?php endif; ?>
+                            
+                            <div class="settings-actions">
+                                <button type="button" id="saveFloorsBtn" class="primary-btn">Save & Close</button>
+                            </div>
                         </div>
                     </div>
 

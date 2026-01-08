@@ -57,11 +57,14 @@
     }
 }
 
-/* Cube stagger animation */
+/* Cube stagger animation on initial load */
 .cube {
     animation: fade-in 0.5s var(--ease) forwards;
+    /* Smooth transition for floor filtering */
+    transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
 }
 
+/* Staggered entrance delays */
 .cube:nth-child(1) {
     animation-delay: 0.05s;
 }
@@ -80,6 +83,52 @@
 
 .cube:nth-child(5) {
     animation-delay: 0.25s;
+}
+
+.cube:nth-child(6) {
+    animation-delay: 0.3s;
+}
+
+.cube:nth-child(7) {
+    animation-delay: 0.35s;
+}
+
+.cube:nth-child(8) {
+    animation-delay: 0.4s;
+}
+
+.cube:nth-child(9) {
+    animation-delay: 0.45s;
+}
+
+.cube:nth-child(10) {
+    animation-delay: 0.5s;
+}
+
+/* Hidden state for floor filtering (GPU-accelerated) */
+.cube.hidden-by-filter {
+    opacity: 0;
+    transform: scale(0.95);
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
+}
+
+/* Visible state (from hidden) */
+.cube.visible-by-filter {
+    animation: cube-reveal 0.6s var(--ease) forwards;
+}
+
+@keyframes cube-reveal {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
 }
 
 /* ==================== THEME TOGGLE ==================== */
