@@ -5,9 +5,27 @@
  */
 
 /**
- * Initialize all functionality when DOM is ready
+ * Initialize all functionality when DOM is ready.
+ * Fetches settings and floors from API before applying them.
  */
-document.addEventListener('DOMContentLoaded', function () {
+document.addEventListener('DOMContentLoaded', async function () {
+    // Fetch app data from API (cleaner than inline scripts)
+    try {
+        const [settingsRes, floorsRes] = await Promise.all([
+            fetch('api.php?action=get_settings'),
+            fetch('api.php?action=get_floors')
+        ]);
+        const settingsData = await settingsRes.json();
+        const floorsData = await floorsRes.json();
+
+        window.appSettings = settingsData.success ? settingsData.data : {};
+        window.appFloors = floorsData.success ? floorsData.data : [];
+    } catch (e) {
+        // Fallback to empty if API fails
+        window.appSettings = {};
+        window.appFloors = [];
+    }
+
     // Apply width to level bars via JavaScript to avoid inline styles
     document.querySelectorAll('.level-fill').forEach(function (fill) {
         const level = fill.getAttribute('data-level') || '0';

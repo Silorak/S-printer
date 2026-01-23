@@ -499,11 +499,6 @@ header('Content-Type: text/html; charset=utf-8');
         </div>
     </div>
 
-    <!-- Pass settings to JavaScript -->
-    <script>
-        window.appSettings = <?= json_encode($settings) ?>;
-        window.appFloors = <?= json_encode($floors) ?>;
-    </script>
     <script src="script.js"></script>
 </body>
 </html>
