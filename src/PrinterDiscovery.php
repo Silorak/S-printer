@@ -327,6 +327,9 @@ class PrinterDiscovery {
                 'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
                 'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
             ],
+            'PANTUM' => [
+                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1'
+            ],
             'GENERIC' => [
                 'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
                 'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
@@ -356,6 +359,13 @@ class PrinterDiscovery {
                 if (!empty($brotherLevels)) {
                     return $brotherLevels;
                 }
+            }
+            // Brother mono laser printers (DCP-L, HL-L, MFC-L series)
+            // Skip direct OIDs — the hardcoded index mapping assumes color order,
+            // but mono lasers have Drum at index 1 and Black Toner at index 2.
+            // Let the standard MIB walk use supply descriptions to identify correctly.
+            if (preg_match('/DCP-L|HL-L|MFC-L/i', $sysDescrClean)) {
+                return [];
             }
         }
         $data = [];
@@ -419,6 +429,22 @@ class PrinterDiscovery {
      * Cleans up the raw text returned by the printer (removes "STRING:", quotes, etc.)
      */
     private function sanitizeSnmpValue(string $value): string {
+        // Handle Hex-STRING values: convert hex bytes to ASCII
+        // e.g., "Hex-STRING: 48 50" → "HP", "Hex-STRING: 00 00 00 00" → "N/A"
+        if (preg_match('/^Hex-STRING:\s*/i', $value)) {
+            $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $value));
+            $hexBytes = str_replace(' ', '', $hexPart);
+            $ascii = '';
+            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+                $byte = hexdec(substr($hexBytes, $i, 2));
+                if ($byte >= 32 && $byte <= 126) {
+                    $ascii .= chr($byte);
+                }
+            }
+            $ascii = trim($ascii);
+            return $ascii !== '' ? $ascii : 'N/A';
+        }
+
         $clean = trim(preg_replace([
             '/^STRING:\s*"/', 
             '/"$/', 
@@ -445,7 +471,8 @@ class PrinterDiscovery {
             'RICOH' => ['ricoh'],
             'KONICA' => ['konica', 'minolta'],
             'SAMSUNG' => ['samsung'],
-            'TOSHIBA' => ['toshiba']
+            'TOSHIBA' => ['toshiba'],
+            'PANTUM' => ['pantum']
         ];
         
         foreach ($vendors as $vendor => $keywords) {

@@ -14,17 +14,30 @@ header('Content-Type: application/json');
 
 require_once 'PrinterDiscovery.php';
 require_once 'Database.php';
+require_once 'CacheManager.php';
 
 // Helper function to send a success response
-function sendResponse($data = null) {
+// Uses 'never' return type (PHP 8.1+) to indicate this function always halts execution
+function sendResponse(mixed $data = null): never {
     echo json_encode(['success' => true, 'data' => $data]);
     exit;
 }
 
 // Helper function to send an error response
-function sendError($message) {
+function sendError(string $message): never {
     echo json_encode(['success' => false, 'error' => $message]);
     exit;
+}
+
+// Strict Content-Type validation for POST requests (OWASP CSRF prevention)
+// application/json triggers CORS preflight; rejecting other types prevents
+// attackers from bypassing preflight with text/plain form submissions
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (stripos($contentType, 'application/json') === false) {
+        http_response_code(415); // Unsupported Media Type (RFC 7231)
+        sendError('Content-Type must be application/json');
+    }
 }
 
 // Get the "action" parameter from the URL (e.g., api.php?action=add_printer)
@@ -57,44 +70,65 @@ try {
 
         case 'add_printer':
             // Action: Save a new printer to the database
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['ip'])) {
                 sendError('IP address is required');
             }
             
             // Try to add it
             if ($db->addPrinter($input)) {
+                // Invalidate cache so dashboard shows the new printer immediately
+                (new CacheManager('cache'))->delete('printers_data');
                 sendResponse();
             } else {
-                // If it fails, send back the specific database error
-                sendError('Failed to add printer: ' . $db->getLastError());
+                // Log detailed error server-side, return generic message (OWASP)
+                error_log('Add printer failed: ' . $db->getLastError());
+                sendError('Failed to add printer. The IP may already exist.');
             }
             break;
 
         case 'edit_printer':
             // Action: Update an existing printer
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['id'])) {
                 sendError('Printer ID is required');
             }
             
             // Try to update it
             if ($db->updatePrinter((int)$input['id'], $input)) {
+                // Invalidate cache so dashboard reflects the edit immediately
+                (new CacheManager('cache'))->delete('printers_data');
                 sendResponse();
             } else {
-                sendError('Failed to update printer: ' . $db->getLastError());
+                error_log('Edit printer failed: ' . $db->getLastError());
+                sendError('Failed to update printer');
             }
             break;
 
         case 'delete_printer':
             // Action: Remove a printer
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['id'])) {
                 sendError('Printer ID is required');
             }
             
             // Try to delete it
             if ($db->deletePrinter((int)$input['id'])) {
+                // Invalidate cache so dashboard removes the printer immediately
+                (new CacheManager('cache'))->delete('printers_data');
                 sendResponse();
             } else {
-                sendError('Failed to delete printer: ' . $db->getLastError());
+                error_log('Delete printer failed: ' . $db->getLastError());
+                sendError('Failed to delete printer');
             }
             break;
 
@@ -114,6 +148,10 @@ try {
             break;
 
         case 'import_printers':
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             // Action: Import printers and floors from JSON
             // Support both new format (with floors) and old format (printers only)
             
@@ -193,6 +231,9 @@ try {
                 }
             }
 
+            // Invalidate cache after import
+            (new CacheManager('cache'))->delete('printers_data');
+
             sendResponse([
                 'printerCount' => $count, 
                 'floorCount' => $floorCount,
@@ -210,6 +251,10 @@ try {
 
         case 'add_floor':
             // Action: Create a new floor
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['name'])) {
                 sendError('Floor name is required');
             }
@@ -220,12 +265,17 @@ try {
             if ($floorId !== false) {
                 sendResponse(['id' => $floorId]);
             } else {
-                sendError('Failed to add floor: ' . $db->getLastError());
+                error_log('Add floor failed: ' . $db->getLastError());
+                sendError('Failed to add floor');
             }
             break;
 
         case 'edit_floor':
             // Action: Update a floor
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['id']) || empty($input['name'])) {
                 sendError('Floor ID and name are required');
             }
@@ -235,12 +285,17 @@ try {
             if ($db->updateFloor((int)$input['id'], $input['name'], $sortOrder)) {
                 sendResponse();
             } else {
-                sendError('Failed to update floor: ' . $db->getLastError());
+                error_log('Edit floor failed: ' . $db->getLastError());
+                sendError('Failed to update floor');
             }
             break;
 
         case 'delete_floor':
             // Action: Delete a floor
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             if (empty($input['id'])) {
                 sendError('Floor ID is required');
             }
@@ -248,7 +303,8 @@ try {
             if ($db->deleteFloor((int)$input['id'])) {
                 sendResponse();
             } else {
-                sendError('Failed to delete floor: ' . $db->getLastError());
+                error_log('Delete floor failed: ' . $db->getLastError());
+                sendError('Failed to delete floor');
             }
             break;
 
@@ -261,6 +317,10 @@ try {
             break;
 
         case 'save_settings':
+            if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+                http_response_code(405);
+                sendError('Method not allowed');
+            }
             // Action: Save multiple settings
             if (!is_array($input)) {
                 sendError('Invalid settings data');
@@ -287,5 +347,7 @@ try {
             sendError('Invalid action');
     }
 } catch (Exception $e) {
-    sendError('Server error: ' . $e->getMessage());
+    // Log detailed error server-side, return generic message (OWASP)
+    error_log('API error: ' . $e->getMessage());
+    sendError('An unexpected error occurred');
 }
