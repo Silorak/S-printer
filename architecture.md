@@ -218,31 +218,45 @@ classDiagram
         -int retries
         +detectPrinter(string ip) ?array
         +getPrinterData(array printer) array
+        -getSysInfo(string ip) array
+        -getPrinterInfo(string ip) array
         -getSupplyLevels(string ip) array
         -getDirectSupplyLevels(string ip) array
-        -detectVendor(string sysDescr) string
-        -sanitizeSnmpValue(string val) string
+        -detectVendor(string description) string
+        -determineColor(string description) string
+        -sanitizeSnmpValue(string value) string
         -getBrotherInkjetLevels(string ip) array
     }
 
     class Database {
-        -PDO pdo
-        -string lastError
+        -?PDO pdo
+        -?string lastError
+        +getConnection() ?PDO
+        -initSchema() void
         +getPrinters() array
         +addPrinter(array data) bool
-        +editPrinter(int id, array data) bool
+        +updatePrinter(int id, array data) bool
+        +updatePrinterLevels(int id, array levels) bool
         +deletePrinter(int id) bool
+        +getPrinterByIp(string ip) ?array
         +getFloors() array
-        +getSetting(string key) ?string
-        +setSetting(string key, string val) bool
-        +getLastError() string
+        +addFloor(string name, int sortOrder) int|false
+        +updateFloor(int id, string name, ?int sortOrder) bool
+        +deleteFloor(int id) bool
+        +getSettings() array
+        +getSetting(string key, mixed default) mixed
+        +setSetting(string key, string value) bool
+        +getLastError() ?string
     }
 
     class CacheManager {
         -string cacheDir
-        +get(string key) ?array
-        +set(string key, array data) void
-        +delete(string key) void
+        -int cacheTtl
+        +get(string key) mixed
+        +set(string key, mixed data) bool
+        +delete(string key) bool
+        +clear() bool
+        -getCacheFilePath(string key) string
     }
 
     PrinterDiscovery ..> Database : reads printer list
