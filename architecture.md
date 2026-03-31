@@ -101,6 +101,20 @@ Simple Network Management Protocol (SNMP) is an Internet Standard protocol defin
 - **Community String**: Authentication credential (default: `"public"`, read-only)
 - **OID**: Object Identifier — a unique address for each data point on the device
 
+```mermaid
+graph LR
+    subgraph Manager["Manager (Sprinter)"]
+        App["PHP snmp2_get()"]
+    end
+
+    subgraph Agent["Agent (Printer)"]
+        MIB["MIB Data Store<br/><i>OID → value mappings</i>"]
+    end
+
+    App -->|"GetRequest<br/>UDP:161<br/>community='public'"| MIB
+    MIB -->|"GetResponse<br/>OID value"| App
+```
+
 ### 2.2 OID Tree Structure (RFC 3805 — Printer MIB v2)
 
 RFC 3805, titled "Printer MIB v2," defines the standard Management Information Base for printers. The supply-related OIDs used by Sprinter are:
@@ -162,6 +176,25 @@ $percentage = round(($current / $max) * 100, 2);
 | `-2`  | Unknown status |
 | `-3`  | Supply is above threshold — exact level not available |
 
+```mermaid
+stateDiagram-v2
+    [*] --> Querying : SNMP request sent
+
+    Querying --> Online : Valid level returned
+    Querying --> Offline : snmp2_get() timeout / false
+    Querying --> Unknown : Returns −1 or −2
+
+    Online --> OK : Level > 10%
+    Online --> Low : Level ≤ 10%
+    Online --> AboveThreshold : Returns −3
+
+    OK --> [*]
+    Low --> [*]
+    AboveThreshold --> [*]
+    Offline --> [*]
+    Unknown --> [*]
+```
+
 ### 2.5 Vendor-Specific OID Challenges
 
 While RFC 3805 defines a standard, manufacturers implement OIDs differently:
@@ -176,6 +209,51 @@ While RFC 3805 defines a standard, manufacturers implement OIDs differently:
 ---
 
 ## 3. PHP 8 Implementation & Best Practices
+
+```mermaid
+classDiagram
+    class PrinterDiscovery {
+        -string community
+        -int timeout
+        -int retries
+        +detectPrinter(string ip) ?array
+        +getPrinterData(array printer) array
+        -getSupplyLevels(string ip) array
+        -getDirectSupplyLevels(string ip) array
+        -detectVendor(string sysDescr) string
+        -sanitizeSnmpValue(string val) string
+        -getBrotherInkjetLevels(string ip) array
+    }
+
+    class Database {
+        -PDO pdo
+        -string lastError
+        +getPrinters() array
+        +addPrinter(array data) bool
+        +editPrinter(int id, array data) bool
+        +deletePrinter(int id) bool
+        +getFloors() array
+        +getSetting(string key) ?string
+        +setSetting(string key, string val) bool
+        +getLastError() string
+    }
+
+    class CacheManager {
+        -string cacheDir
+        +get(string key) ?array
+        +set(string key, array data) void
+        +delete(string key) void
+    }
+
+    PrinterDiscovery ..> Database : reads printer list
+    PrinterDiscovery ..> CacheManager : cached by
+    Database ..> MariaDB : PDO connection
+
+    class MariaDB {
+        <<external>>
+        TCP port 3306
+    }
+```
 
 ### 3.1 Strict Type Declarations
 
@@ -264,6 +342,17 @@ $printerData['info']['full_name'] =
 ### 3.4 Error Handling Strategy
 
 The application uses a layered error handling approach:
+
+```mermaid
+graph TD
+    A["Incoming operation"] --> B{"Layer 1:<br/>SNMP query"}
+    B -->|"snmp2_get() returns false"| C["Return null<br/><i>Printer unreachable — expected</i>"]
+    B -->|"Success"| D{"Layer 2:<br/>Database operation"}
+    D -->|"PDOException"| E["Catch → error_log()<br/><i>Store in lastError</i>"]
+    D -->|"Success"| F{"Layer 3:<br/>API response"}
+    F -->|"Error"| G["sendError()<br/><i>Generic message to user</i><br/><i>Details in server log</i>"]
+    F -->|"Success"| H["sendResponse()<br/><i>JSON: success + data</i>"]
+```
 
 ```php
 // Layer 1: SNMP errors suppressed with @ operator (expected failures)
@@ -498,6 +587,20 @@ volumes:
 
 ## 6. Security Implementation
 
+```mermaid
+graph TD
+    A["Incoming HTTP request"] --> B["Security headers<br/><i>CSP, X-Frame-Options, nosniff</i>"]
+    B --> C{"POST request?"}
+    C -->|"Yes"| D{"Content-Type =<br/>application/json?"}
+    D -->|"No"| E["415 Unsupported<br/>Media Type"]
+    D -->|"Yes"| F["Input validation<br/><i>filter_var, whitelist</i>"]
+    C -->|"GET"| F
+    F -->|"Invalid"| G["400 / 405<br/>Error response"]
+    F -->|"Valid"| H["PDO prepared statement<br/><i>Named parameters</i>"]
+    H --> I["Output escaping<br/><i>htmlspecialchars (server)</i><br/><i>textContent (client)</i>"]
+    I --> J["Response to user<br/><i>Generic errors only</i>"]
+```
+
 ### 6.1 HTTP Security Headers
 
 Applied at both Apache and PHP levels for defense in depth:
@@ -590,9 +693,36 @@ function escapeHtml(text) {
 
 ## 7. Design Patterns
 
+```mermaid
+graph LR
+    subgraph Patterns["Design patterns used in Sprinter"]
+        A["Strategy<br/><i>Vendor OID maps</i>"]
+        B["Template Method<br/><i>Two-phase detection</i>"]
+        C["Cache-Aside<br/><i>Read/write split</i>"]
+    end
+    A -.->|"§7.1"| D["PrinterDiscovery"]
+    B -.->|"§7.2"| D
+    C -.->|"§7.3"| E["CacheManager +<br/>index.php / api.php"]
+```
+
 ### 7.1 Strategy Pattern — Vendor-Specific SNMP Handling
 
 The `getDirectSupplyLevels()` method uses a strategy-like approach where the OID mapping changes based on the detected vendor:
+
+```mermaid
+graph TD
+    A["detectVendor(sysDescr)"] --> B{"Vendor match?"}
+    B -->|"Contains 'HP'"| C["HP OID map<br/><i>index 1 = black</i>"]
+    B -->|"Contains 'BROTHER'"| D["Brother OID map<br/><i>index 1 = black</i>"]
+    B -->|"Contains 'TOSHIBA'"| E["Toshiba OID map<br/><i>index 2 = black</i>"]
+    B -->|"Contains 'PANTUM'"| F["Pantum OID map<br/><i>mono only</i>"]
+    B -->|"No match"| G["GENERIC OID map<br/><i>standard indices</i>"]
+    C --> H["Query printer with<br/>selected OID mapping"]
+    D --> H
+    E --> H
+    F --> H
+    G --> H
+```
 
 ```php
 $oidMappings = [
@@ -629,6 +759,23 @@ private function getSupplyLevels(string $ip): array {
 ```
 
 ### 7.3 Caching Strategy — Cache-Aside Pattern with Write Invalidation
+
+```mermaid
+graph TD
+    subgraph Read["Read path (index.php)"]
+        R1["Request arrives"] --> R2{"Cache has<br/>printers_data?"}
+        R2 -->|"Hit"| R3["Use cached data"]
+        R2 -->|"Miss"| R4["Query all printers<br/>via SNMP"]
+        R4 --> R5["Store in cache<br/><i>TTL = 5 minutes</i>"]
+        R5 --> R3
+    end
+
+    subgraph Write["Write path (api.php)"]
+        W1["Add / edit / delete<br/>printer"] --> W2["Mutate database"]
+        W2 --> W3["Invalidate cache<br/>delete('printers_data')"]
+        W3 --> W4["Next request<br/>triggers fresh SNMP"]
+    end
+```
 
 ```php
 // Read path: check cache first (index.php)
@@ -703,6 +850,33 @@ if ($check->rowCount() === 0) {
 
 ## 9. CSS Architecture
 
+```mermaid
+graph TD
+    subgraph CSS["Stylesheet modules"]
+        direction TB
+        A["base.css<br/><i>Design tokens, resets</i>"]
+        B["layout.css<br/><i>Grid, sidebar</i>"]
+        C["components.css<br/><i>Cards, bars, buttons</i>"]
+        D["modals.css<br/><i>Dialogs, forms</i>"]
+        E["responsive.css<br/><i>Media queries</i>"]
+    end
+
+    A -->|"Variables cascade to"| B
+    A -->|"Variables cascade to"| C
+    A -->|"Variables cascade to"| D
+    E -->|"Overrides at breakpoints"| B
+    E -->|"Overrides at breakpoints"| C
+    E -->|"Overrides at breakpoints"| D
+
+    subgraph Theme["Theme switching"]
+        T1[":root — Everforest Dark"]
+        T2[".light-theme — Light override"]
+    end
+
+    T1 -.->|"CSS custom properties"| A
+    T2 -.->|"Overrides --bg, --fg, etc."| A
+```
+
 The stylesheet is modularized into five files following separation of concerns:
 
 | File | Responsibility | Key Features |
@@ -761,6 +935,27 @@ No Hungarian notation is used anywhere in the codebase.
 ### Bug 1: Brother Mono Laser Shows "Cyan" Instead of "Black" ✅
 
 **Affected models**: DCP-L, HL-L, MFC-L series (monochrome lasers)
+
+```mermaid
+graph TD
+    subgraph Before["Before fix — hardcoded mapping"]
+        A1["Brother OID index 1"] -->|"Mapped to"| B1["'Black'"]
+        A2["Brother OID index 2"] -->|"Mapped to"| B2["'Cyan'"]
+    end
+
+    subgraph Actual["Mono laser reality"]
+        C1["Index 1 = Drum Unit<br/><i>returns −3</i>"]
+        C2["Index 2 = Black Toner<br/><i>actual toner level</i>"]
+    end
+
+    B2 -.->|"Mislabeled!"| C2
+
+    subgraph After["After fix — MIB walk"]
+        D1["Skip direct OIDs"] --> D2["snmp2_real_walk()"]
+        D2 --> D3["Read supply description text<br/><i>'Black Toner' vs 'Drum Unit'</i>"]
+        D3 --> D4["Correct label assigned"]
+    end
+```
 
 **Root cause**: The hardcoded BROTHER OID mapping assumes index 1 = Black, index 2 = Cyan. On mono laser printers, index 1 = Drum Unit (returns `-3`), index 2 = Black Toner. The code maps index 2 to "cyan" by name.
 
