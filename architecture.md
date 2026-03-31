@@ -12,75 +12,107 @@ Sprinter is a web-based printer monitoring application that queries network prin
 
 ```mermaid
 graph TD
-    subgraph "Client Layer"
-        Browser["Web Browser"]
+    subgraph Client["Client Layer"]
+        Browser["🌐 Web Browser"]
     end
 
-    subgraph "Docker: Web Container"
-        Apache["Apache HTTP Server"]
-        PHP["PHP 8.2 Runtime"]
-        IndexPHP["index.php — Dashboard"]
-        ApiPHP["api.php — REST API"]
-        Discovery["PrinterDiscovery.php — SNMP Engine"]
-        DB["Database.php — Data Access Layer"]
-        Cache["CacheManager.php — File Cache"]
+    subgraph Docker_Web["Docker: Web Container — php:8.2-apache"]
+        direction TB
+        subgraph Entry["Entry Points"]
+            IndexPHP["index.php<br/><i>Dashboard</i>"]
+            ApiPHP["api.php<br/><i>REST API</i>"]
+        end
+        subgraph Core["Core Services"]
+            Discovery["PrinterDiscovery.php<br/><i>SNMP Engine</i>"]
+            DB["Database.php<br/><i>PDO Data Access</i>"]
+            Cache["CacheManager.php<br/><i>File Cache</i>"]
+        end
     end
 
-    subgraph "Docker: Database Container"
+    subgraph Docker_DB["Docker: Database Container"]
         MariaDB["MariaDB 10.6"]
     end
 
-    subgraph "Network"
+    subgraph Network["Network Printers"]
         Printer1["Printer A"]
         Printer2["Printer B"]
         PrinterN["Printer N"]
     end
 
-    Browser -->|"HTTP GET"| Apache
-    Browser -->|"AJAX (Fetch API)"| Apache
-    Apache --> PHP
-    PHP --> IndexPHP
-    PHP --> ApiPHP
+    Browser -->|"HTTP GET / AJAX"| IndexPHP
+    Browser -->|"Fetch API"| ApiPHP
+
     IndexPHP --> Discovery
     IndexPHP --> DB
     IndexPHP --> Cache
     ApiPHP --> Discovery
     ApiPHP --> DB
-    DB -->|"PDO / TCP:3306"| MariaDB
-    Discovery -->|"SNMPv2c / UDP:161"| Printer1
-    Discovery -->|"SNMPv2c / UDP:161"| Printer2
-    Discovery -->|"SNMPv2c / UDP:161"| PrinterN
+
+    DB -->|"PDO<br/>TCP:3306"| MariaDB
+    Discovery -->|"SNMPv2c<br/>UDP:161"| Printer1
+    Discovery -->|"SNMPv2c<br/>UDP:161"| Printer2
+    Discovery -->|"SNMPv2c<br/>UDP:161"| PrinterN
 ```
 
 ### 1.2 Request Lifecycle
 
 ```mermaid
 sequenceDiagram
-    participant U as User Browser
+    actor U as User Browser
     participant I as index.php
-    participant C as CacheManager
     participant D as Database
+    participant C as CacheManager
+
+    U->>+I: HTTP GET /
+
+    Note over I,D: Phase 1 — Load printer list
+    I->>+D: getPrinters()
+    D-->>-I: Printer records (IP, name, floor)
+
+    Note over I,C: Phase 2 — Check cache
+    I->>+C: get('printers_data')
+
+    alt ✅ Cache Hit
+        C-->>-I: Cached SNMP data
+        Note right of I: Skip SNMP queries entirely
+    else ❌ Cache Miss
+        C-->>I: null
+        Note over I: Phase 3 — Query printers via SNMP
+        rect rgb(40, 40, 40)
+            Note right of I: See SNMP detail diagram below
+            I->>I: Loop: getPrinterData() per printer
+        end
+        I->>C: set('printers_data', data, TTL=5min)
+    end
+
+    I-->>-U: HTML with printer cards
+```
+
+#### 1.2.1 SNMP Query Detail (per printer)
+
+```mermaid
+sequenceDiagram
+    participant I as index.php
     participant S as PrinterDiscovery
     participant P as Printer (SNMP)
 
-    U->>I: HTTP GET /
-    I->>D: getPrinters()
-    D-->>I: Printer records (IP, name, floor)
-    I->>C: get('printers_data')
-    alt Cache Hit
-        C-->>I: Cached SNMP data
-    else Cache Miss
-        loop For each printer
-            I->>S: getPrinterData(printer)
-            S->>P: snmp2_get(sysDescr OID)
-            P-->>S: System description
-            S->>P: snmp2_get(supply OIDs)
-            P-->>S: Toner/ink levels
-            S-->>I: Status + levels
-        end
-        I->>C: set('printers_data', data)
+    I->>+S: getPrinterData(printer)
+
+    Note over S,P: Phase A — Vendor-specific OIDs (fast)
+    S->>+P: snmp2_get(sysDescr OID)
+    P-->>-S: System description → detect vendor
+    S->>+P: snmp2_get(vendor-specific supply OIDs)
+    P-->>-S: Supply levels
+
+    alt ✅ Direct OIDs returned data
+        S-->>I: Status + levels
+    else ❌ Direct OIDs empty
+        Note over S,P: Phase B — Standard MIB walk (fallback)
+        S->>+P: snmp2_real_walk(supply table OID)
+        P-->>-S: Full supply table
+        S->>S: Parse descriptions, match colors, calc %
+        S-->>-I: Status + levels
     end
-    I-->>U: HTML with printer cards
 ```
 
 ---
@@ -411,18 +443,18 @@ setActiveFloor(savedFloor);
 
 ```mermaid
 graph LR
-    subgraph "Host Machine"
-        subgraph "Docker Network"
-            Web["web container<br/>php:8.2-apache<br/>Port 8080:80"]
-            DB["db container<br/>mariadb:10.6<br/>Port 3306 (internal)"]
+    subgraph Host["Host Machine"]
+        subgraph DockerNet["Docker Network (bridge)"]
+            Web["🌐 web container<br/><b>php:8.2-apache</b><br/>Port 8080 → 80"]
+            DB["🗄️ db container<br/><b>mariadb:10.6</b><br/>Port 3306 (internal)"]
         end
-        Volume["db_data<br/>(Persistent Volume)"]
-        Src["./src<br/>(Bind Mount)"]
+        Volume["💾 db_data<br/><i>Named Volume</i><br/>Persistent storage"]
+        Src["📁 ./src<br/><i>Bind Mount</i><br/>Live code editing"]
     end
 
-    Web -->|"TCP:3306"| DB
+    Web -->|"PDO / TCP:3306"| DB
     DB --- Volume
-    Src -.->|"Volume Mount"| Web
+    Src -.->|"Volume mount<br/>→ /var/www/html"| Web
 ```
 
 ### 5.2 Dockerfile Analysis
