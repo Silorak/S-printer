@@ -57,62 +57,34 @@ graph TD
 ### 1.2 Request Lifecycle
 
 ```mermaid
-sequenceDiagram
-    actor U as User Browser
-    participant I as index.php
-    participant D as Database
-    participant C as CacheManager
+graph TD
+    A["🌐 HTTP GET /"] --> B["getPrinters()"]
+    B --> C["Database returns<br/>printer records<br/><i>IP, name, floor</i>"]
+    C --> D{"CacheManager<br/>get('printers_data')"}
 
-    U->>+I: HTTP GET /
+    D -->|"Cache Hit"| E["Use cached<br/>SNMP data"]
+    D -->|"Cache Miss"| F["For each printer:<br/>getPrinterData()"]
 
-    Note over I,D: Phase 1 — Load printer list
-    I->>+D: getPrinters()
-    D-->>-I: Printer records (IP, name, floor)
+    F --> G["SNMP query<br/><i>See 1.2.1 below</i>"]
+    G --> H["set('printers_data',<br/>data, TTL=5min)"]
 
-    Note over I,C: Phase 2 — Check cache
-    I->>+C: get('printers_data')
-
-    alt ✅ Cache Hit
-        C-->>-I: Cached SNMP data
-        Note right of I: Skip SNMP queries entirely
-    else ❌ Cache Miss
-        C-->>I: null
-        Note over I: Phase 3 — Query printers via SNMP
-        rect rgb(40, 40, 40)
-            Note right of I: See SNMP detail diagram below
-            I->>I: Loop: getPrinterData() per printer
-        end
-        I->>C: set('printers_data', data, TTL=5min)
-    end
-
-    I-->>-U: HTML with printer cards
+    E --> I["Render HTML<br/>printer cards"]
+    H --> I
 ```
 
 #### 1.2.1 SNMP Query Detail (per printer)
 
 ```mermaid
-sequenceDiagram
-    participant I as index.php
-    participant S as PrinterDiscovery
-    participant P as Printer (SNMP)
+graph TD
+    A["getPrinterData(ip)"] --> B["snmp2_get(sysDescr OID)<br/><i>Detect vendor from response</i>"]
+    B --> C["Phase A: Try vendor-specific OIDs<br/><i>Direct OID map — fast</i>"]
+    C --> D{"Data returned?"}
 
-    I->>+S: getPrinterData(printer)
+    D -->|"Yes"| E["Return status + levels"]
+    D -->|"No / empty"| F["Phase B: Standard MIB walk<br/>snmp2_real_walk(supply table)<br/><i>RFC 3805 — universal fallback</i>"]
 
-    Note over S,P: Phase A — Vendor-specific OIDs (fast)
-    S->>+P: snmp2_get(sysDescr OID)
-    P-->>-S: System description → detect vendor
-    S->>+P: snmp2_get(vendor-specific supply OIDs)
-    P-->>-S: Supply levels
-
-    alt ✅ Direct OIDs returned data
-        S-->>I: Status + levels
-    else ❌ Direct OIDs empty
-        Note over S,P: Phase B — Standard MIB walk (fallback)
-        S->>+P: snmp2_real_walk(supply table OID)
-        P-->>-S: Full supply table
-        S->>S: Parse descriptions, match colors, calc %
-        S-->>-I: Status + levels
-    end
+    F --> G["Parse supply descriptions<br/>Match colors by text<br/>Calculate percentages"]
+    G --> E
 ```
 
 ---
