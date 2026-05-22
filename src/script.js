@@ -55,6 +55,15 @@ document.addEventListener('DOMContentLoaded', async function () {
 
     // Apply display settings
     applyDisplaySettings();
+
+    // Start background refresh
+    refreshAllPrinters();
+
+    // Wire reactive refresh button
+    const refreshBtn = document.getElementById('refreshDataBtn');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', refreshAllPrinters);
+    }
 });
 
 /**
@@ -357,15 +366,13 @@ function setupForm() {
 }
 
 /**
- * Deletes a printer from the database after user confirmation.
+ * Deletes a printer from the database instantly without confirmation.
  * Removes the printer card from DOM on success.
  * @async
  * @param {number} id - The printer ID to delete
  * @returns {Promise<void>}
  */
 async function deletePrinter(id) {
-    if (!confirm('Are you sure you want to delete this printer?')) return;
-
     try {
         const response = await fetch('api.php?action=delete_printer', {
             method: 'POST',
@@ -656,8 +663,6 @@ function setupFloorManagement() {
                 }
             } else if (btn.classList.contains('delete-floor-btn')) {
                 // Delete floor
-                if (!confirm('Delete this floor? Printers will be unassigned.')) return;
-
                 try {
                     const response = await fetch('api.php?action=delete_floor', {
                         method: 'POST',
@@ -854,4 +859,382 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+/**
+ * Cleans up serial numbers.
+ * @param {string|null} serial - The raw serial number
+ * @returns {string} The cleaned serial number
+ */
+function cleanSerialNumber(serial) {
+    if (!serial) {
+        return 'N/A';
+    }
+    
+    if (/^Hex-STRING:\s*/i.test(serial)) {
+        let hexPart = serial.replace(/^Hex-STRING:\s*/i, '').trim();
+        let hexBytes = hexPart.replace(/\s+/g, '');
+        
+        let ascii = '';
+        let isPrintable = true;
+        for (let i = 0; i < hexBytes.length; i += 2) {
+            let byte = parseInt(hexBytes.substr(i, 2), 16);
+            if (byte < 32 || byte > 126) {
+                isPrintable = false;
+            }
+            ascii += String.fromCharCode(byte);
+        }
+        
+        if (isPrintable && hexBytes.length > 0) {
+            return ascii.trim();
+        }
+        
+        if (hexBytes.length <= 8) {
+            return parseInt(hexBytes, 16).toString();
+        }
+        
+        return hexBytes;
+    }
+    
+    let hexMatch = serial.match(/^0x([0-9a-fA-F]+)$/i);
+    if (hexMatch) {
+        let hexBytes = hexMatch[1];
+        let ascii = '';
+        let isPrintable = true;
+        for (let i = 0; i < hexBytes.length; i += 2) {
+            let byte = parseInt(hexBytes.substr(i, 2), 16);
+            if (byte < 32 || byte > 126) {
+                isPrintable = false;
+            }
+            ascii += String.fromCharCode(byte);
+        }
+        if (isPrintable && hexBytes.length > 0) {
+            return ascii.trim();
+        }
+        return parseInt(hexBytes, 16).toString();
+    }
+    
+    return serial;
+}
+
+/**
+ * Capitalizes the first letter of a string.
+ * @param {string} string - The string to capitalize
+ * @returns {string} The capitalized string
+ */
+function capitalizeFirstLetter(string) {
+    if (!string) return '';
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
+
+/**
+ * Renders the levels section HTML.
+ * @param {string} status - Printer status
+ * @param {Object} levels - Printer supply levels
+ * @param {Object|null} lastLevels - Last known levels from DB
+ * @returns {string} The levels section HTML
+ */
+function renderLevelsSection(status, levels, lastLevels) {
+    if (status === 'offline') {
+        let html = '<div class="offline-message">Printer is currently offline</div>';
+        if (lastLevels && typeof lastLevels === 'object' && Object.keys(lastLevels).length > 0) {
+            html += '<div class="last-seen-levels">';
+            html += '<small>Last known levels:</small>';
+            for (const [color, level] of Object.entries(lastLevels)) {
+                let displayPercentage = level.percentage + '%';
+                let barWidth = Math.max(0, level.percentage);
+                let specialClass = '';
+                
+                if (level.status === 'ok') {
+                    displayPercentage = 'OK';
+                    barWidth = 100;
+                } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
+                    displayPercentage = 'Not Genuine / Empty Cartridge';
+                    barWidth = 0;
+                    specialClass = 'warning-level';
+                }
+                
+                html += `
+                    <div class="level-bar faded ${specialClass}">
+                        <div class="level-label">
+                            <span>${capitalizeFirstLetter(color)}</span>
+                            <span>${displayPercentage}</span>
+                        </div>
+                        <div class="level-container">
+                            <div class="level-fill ${color}-fill" 
+                                 style="width: ${barWidth}%"
+                                 data-level="${barWidth}">
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+        }
+        return html;
+    }
+    
+    if (status === 'loading') {
+        let html = '';
+        if (levels && typeof levels === 'object' && Object.keys(levels).length > 0) {
+            html += '<div class="last-seen-levels">';
+            html += '<small>Loading live levels...</small>';
+            for (const [color, level] of Object.entries(levels)) {
+                let displayPercentage = level.percentage + '%';
+                let barWidth = Math.max(0, level.percentage);
+                let specialClass = '';
+                
+                if (level.status === 'ok') {
+                    displayPercentage = 'OK';
+                    barWidth = 100;
+                } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
+                    displayPercentage = 'Not Genuine / Empty Cartridge';
+                    barWidth = 0;
+                    specialClass = 'warning-level';
+                }
+                
+                html += `
+                    <div class="level-bar faded ${specialClass}">
+                        <div class="level-label">
+                            <span>${capitalizeFirstLetter(color)}</span>
+                            <span>${displayPercentage}</span>
+                        </div>
+                        <div class="level-container">
+                            <div class="level-fill ${color}-fill" 
+                                 style="width: ${barWidth}%"
+                                 data-level="${barWidth}">
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            html += '</div>';
+        } else {
+            html += `
+                <div class="no-data-message pulse-loading">
+                    Checking printer status...
+                </div>
+            `;
+        }
+        return html;
+    }
+    
+    // Online state
+    let html = '';
+    const hasLevels = levels && typeof levels === 'object' && Object.keys(levels).length > 0;
+    if (hasLevels) {
+        for (const [color, level] of Object.entries(levels)) {
+            let displayPercentage = level.percentage + '%';
+            let barWidth = Math.max(0, level.percentage);
+            let specialClass = '';
+            
+            if (level.status === 'ok') {
+                displayPercentage = 'OK';
+                barWidth = 100;
+            } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
+                displayPercentage = 'Not Genuine / Empty Cartridge';
+                barWidth = 0;
+                specialClass = 'warning-level';
+            }
+            
+            let ariaLabel = (level.current !== undefined && level.max !== undefined) ? `aria-label="${level.current}/${level.max}"` : '';
+            
+            html += `
+                <div class="level-bar ${specialClass}">
+                    <div class="level-label">
+                        <span>${capitalizeFirstLetter(color)}</span>
+                        <span>${displayPercentage}</span>
+                    </div>
+                    <div class="level-container">
+                        <div class="level-fill ${color}-fill" 
+                             style="width: ${barWidth}%"
+                             data-level="${barWidth}"
+                             ${ariaLabel}>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+    } else {
+        html += `
+            <div class="no-data-message">
+                No ink/toner level data available
+            </div>
+        `;
+    }
+    return html;
+}
+
+/**
+ * Refreshes a single printer card's live data in the background.
+ * @async
+ * @param {HTMLElement} cube - The printer card element
+ * @returns {Promise<void>}
+ */
+async function refreshPrinterCard(cube) {
+    const ip = cube.getAttribute('data-ip');
+    if (!ip) return;
+    
+    cube.classList.add('refreshing');
+    
+    try {
+        const response = await fetch('api.php?action=refresh_printer&ip=' + encodeURIComponent(ip));
+        const result = await response.json();
+        
+        if (result.success && result.data) {
+            const data = result.data;
+            const info = data.info || {};
+            const levels = data.levels || {};
+            
+            // 1. Update status classes and indicator
+            const status = info.status || 'offline';
+            const indicator = cube.querySelector('.status-indicator');
+            if (indicator) {
+                indicator.className = `status-indicator ${status}`;
+            }
+            if (status === 'offline') {
+                cube.classList.add('offline-cube');
+            } else {
+                cube.classList.remove('offline-cube');
+            }
+            
+            // 2. Update name if available
+            const nameSpan = cube.querySelector('.printer-name');
+            if (nameSpan && info.full_name) {
+                nameSpan.textContent = info.full_name;
+            }
+            
+            // 3. Update serial if available
+            const serialSpan = cube.querySelector('.printer-serial');
+            if (serialSpan && info.serial_number) {
+                serialSpan.textContent = cleanSerialNumber(info.serial_number);
+            }
+            
+            // 4. Parse last_levels if offline
+            let lastLevels = null;
+            if (info.last_levels) {
+                try {
+                    lastLevels = typeof info.last_levels === 'string' ? JSON.parse(info.last_levels) : info.last_levels;
+                } catch (e) {}
+            }
+            
+            // 5. Update level section HTML
+            const levelsSection = cube.querySelector('.levels-section');
+            if (levelsSection) {
+                levelsSection.innerHTML = renderLevelsSection(status, levels, lastLevels);
+                
+                // Trigger transitions/widths on any newly added level fills
+                levelsSection.querySelectorAll('.level-fill').forEach(fill => {
+                    const val = fill.getAttribute('data-level') || '0';
+                    // Force reflow and set width
+                    void fill.offsetWidth;
+                    fill.style.width = val + '%';
+                });
+            }
+            
+            // 6. Update edit button click handler
+            const id = cube.getAttribute('data-id');
+            const floorId = cube.getAttribute('data-floor-id');
+            const fullInfo = {
+                id: id ? parseInt(id) : null,
+                floor_id: floorId ? parseInt(floorId) : null,
+                ip: info.ip || ip,
+                full_name: info.full_name,
+                description: info.description,
+                purchase_url: info.purchase_url,
+                serial_number: info.serial_number,
+                model: info.model,
+                last_levels: info.last_levels,
+                status: status
+            };
+            
+            const editBtn = cube.querySelector('.edit-btn');
+            if (editBtn) {
+                editBtn.onclick = function() {
+                    openEditModal(fullInfo);
+                };
+            }
+        } else {
+            // Handle error or set to offline
+            const indicator = cube.querySelector('.status-indicator');
+            if (indicator) {
+                indicator.className = `status-indicator offline`;
+            }
+            cube.classList.add('offline-cube');
+        }
+    } catch (e) {
+        console.error('Failed to refresh printer ' + ip, e);
+        // On network error, set to offline
+        const indicator = cube.querySelector('.status-indicator');
+        if (indicator) {
+            indicator.className = `status-indicator offline`;
+        }
+        cube.classList.add('offline-cube');
+    } finally {
+        cube.classList.remove('refreshing');
+        cube.classList.remove('loading-state');
+    }
+}
+
+/**
+ * Executes an array of task-returning functions with limited concurrency.
+ * @async
+ * @param {Array<function(): Promise<any>>} tasks - Array of functions returning promises
+ * @param {number} limit - Concurrency limit
+ * @returns {Promise<Array<any>>} Resolved results of all promises
+ */
+async function throttlePromises(tasks, limit) {
+    const results = [];
+    const executing = new Set();
+    for (const task of tasks) {
+        const p = Promise.resolve().then(() => task());
+        results.push(p);
+        executing.add(p);
+        const clean = () => executing.delete(p);
+        p.then(clean, clean);
+        if (executing.size >= limit) {
+            await Promise.race(executing);
+        }
+    }
+    return Promise.all(results);
+}
+
+/**
+ * Refreshes all printer cards concurrently in the background.
+ * @async
+ * @returns {Promise<void>}
+ */
+async function refreshAllPrinters() {
+    const cubes = document.querySelectorAll('.cube:not(.no-results):not(.floor-empty-state)');
+    if (cubes.length === 0) return;
+    
+    const refreshBtn = document.getElementById('refreshDataBtn');
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = 'Refreshing...';
+    }
+    
+    // Map each cube to its refresh task and run them with concurrency limit of 4
+    const tasks = Array.from(cubes).map(cube => () => refreshPrinterCard(cube));
+    
+    // Wait for all to complete using the high-performance Promise Throttle Pool
+    await throttlePromises(tasks, 4);
+    
+    // Update the last updated time
+    const lastRefreshTime = document.getElementById('lastRefreshTime');
+    if (lastRefreshTime) {
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const hh = String(now.getHours()).padStart(2, '0');
+        const min = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        lastRefreshTime.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+    }
+    
+    if (refreshBtn) {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = 'Refresh Printer Data';
+    }
 }

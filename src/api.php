@@ -177,68 +177,115 @@ try {
             $errors = [];
             $floorIdMap = []; // Maps old floor IDs to new floor IDs
             
-            // First, import floors and build ID mapping
-            foreach ($floors as $floor) {
-                if (empty($floor['name'])) continue;
-                
-                $oldId = $floor['id'] ?? null;
-                
-                // Try to add the floor
-                $newId = $db->addFloor($floor['name'], (int)($floor['sort_order'] ?? 0));
-                
-                if ($newId !== false && $oldId !== null) {
-                    $floorIdMap[$oldId] = $newId;
-                    $floorCount++;
-                }
-            }
-            
-            // Then, import printers with updated floor IDs
-            foreach ($printers as $printer) {
-                if (empty($printer['ip'])) continue;
-                
-                // Map old floor_id to new floor_id if applicable
-                if (!empty($printer['floor_id']) && isset($floorIdMap[$printer['floor_id']])) {
-                    $printer['floor_id'] = $floorIdMap[$printer['floor_id']];
-                } elseif (!empty($printer['floor_id'])) {
-                    // Floor doesn't exist in import, set to null
-                    $printer['floor_id'] = null;
-                }
-
-                // Check if exists
-                $existing = $db->getPrinterByIp($printer['ip']);
-                
-                if ($existing) {
-                    // Update existing
-                    if ($db->updatePrinter((int)$existing['id'], $printer)) {
-                        $count++;
-                    } else {
-                        $errors[] = "Failed to update {$printer['ip']}";
-                    }
-                } else {
-                    // Add new
-                    if ($db->addPrinter($printer)) {
-                        $count++;
-                    } else {
-                        $errors[] = "Failed to add {$printer['ip']}";
+            // Wrap in a single transaction for maximum performance
+            $db->beginTransaction();
+            try {
+                // First, import floors and build ID mapping
+                foreach ($floors as $floor) {
+                    if (empty($floor['name'])) continue;
+                    
+                    $oldId = $floor['id'] ?? null;
+                    
+                    // Try to add the floor
+                    $newId = $db->addFloor($floor['name'], (int)($floor['sort_order'] ?? 0));
+                    
+                    if ($newId !== false && $oldId !== null) {
+                        $floorIdMap[$oldId] = $newId;
+                        $floorCount++;
                     }
                 }
-            }
-            
-            // Import settings if provided
-            foreach ($settings as $key => $value) {
-                if (in_array($key, ['hide_ip', 'show_serial'])) {
-                    $db->setSetting($key, (string)$value);
-                }
-            }
+                
+                $batchSize = 50;
+                $batchCounter = 0;
+                
+                // Then, import printers with updated floor IDs
+                foreach ($printers as $printer) {
+                    if (empty($printer['ip'])) continue;
+                    
+                    // Map old floor_id to new floor_id if applicable
+                    if (!empty($printer['floor_id']) && isset($floorIdMap[$printer['floor_id']])) {
+                        $printer['floor_id'] = $floorIdMap[$printer['floor_id']];
+                    } elseif (!empty($printer['floor_id'])) {
+                        // Floor doesn't exist in import, set to null
+                        $printer['floor_id'] = null;
+                    }
 
-            // Invalidate cache after import
-            (new CacheManager('cache'))->delete('printers_data');
+                    // Check if exists
+                    $existing = $db->getPrinterByIp($printer['ip']);
+                    
+                    if ($existing) {
+                        // Update existing (restore all properties fully during import)
+                        if ($db->updatePrinterFully((int)$existing['id'], $printer)) {
+                            $count++;
+                        } else {
+                            $errors[] = "Failed to update {$printer['ip']}";
+                        }
+                    } else {
+                        // Add new
+                        if ($db->addPrinter($printer)) {
+                            $count++;
+                        } else {
+                            $errors[] = "Failed to add {$printer['ip']}";
+                        }
+                    }
+                    
+                    // Prevent MariaDB lock/heap table exhaustion by chunking transaction commits
+                    $batchCounter++;
+                    if ($batchCounter >= $batchSize) {
+                        $db->commit();
+                        $db->beginTransaction();
+                        $batchCounter = 0;
+                    }
+                }
+                
+                // Import settings if provided
+                foreach ($settings as $key => $value) {
+                    if (in_array($key, ['hide_ip', 'show_serial'])) {
+                        $db->setSetting($key, (string)$value);
+                    }
+                }
+
+                // Invalidate cache after import
+                (new CacheManager('cache'))->delete('printers_data');
+
+                // Commit the changes to disk
+                $db->commit();
+            } catch (Exception $e) {
+                // Roll back any changes if something goes wrong
+                $db->rollBack();
+                sendError('Import failed: ' . $e->getMessage());
+            }
 
             sendResponse([
                 'printerCount' => $count, 
                 'floorCount' => $floorCount,
                 'errors' => $errors
             ]);
+            break;
+
+        case 'refresh_printer':
+            // Action: Query a single printer's live status and levels via SNMP in the background
+            $ip = $_GET['ip'] ?? $input['ip'] ?? '';
+            if (empty($ip)) {
+                sendError('IP address is required');
+            }
+            
+            $dbPrinter = $db->getPrinterByIp($ip);
+            if (!$dbPrinter) {
+                sendError('Printer not found in database');
+            }
+            
+            // Query live SNMP data
+            $data = $discovery->getPrinterData($dbPrinter);
+            
+            // If online, save these levels to the database for future offline use
+            if (isset($data['info']['status']) && $data['info']['status'] === 'online') {
+                if (!empty($data['levels'])) {
+                    $db->updatePrinterLevels((int)$dbPrinter['id'], $data['levels']);
+                }
+            }
+            
+            sendResponse($data);
             break;
 
         // ==================== FLOOR ENDPOINTS ====================

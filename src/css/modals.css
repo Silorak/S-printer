@@ -149,6 +149,10 @@
     transform: translateY(-2px);
 }
 
+.primary-btn:active {
+    transform: translateY(0) scale(0.97);
+}
+
 .secondary-btn {
     background-color: transparent;
     border: 1px solid var(--primary);
@@ -164,9 +168,17 @@
     background-color: rgba(127, 187, 179, 0.1);
 }
 
+.secondary-btn:active {
+    transform: scale(0.97);
+}
+
 .danger-btn {
     background: rgba(224, 108, 117, 0.2);
     color: #e06c75;
+}
+
+.danger-btn:active {
+    transform: scale(0.97);
 }
 
 /* Status Text */
@@ -225,6 +237,10 @@
 
 .settings-nav-item:hover {
     background: rgba(127, 187, 179, 0.1);
+}
+
+.settings-nav-item:active {
+    transform: scale(0.97);
 }
 
 .settings-nav-item.active {
@@ -292,6 +308,23 @@
     overflow-y: auto;
 }
 
+/* Custom Scrollbar for premium feel */
+.floor-list::-webkit-scrollbar {
+    width: 6px;
+}
+.floor-list::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 3px;
+}
+.floor-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+    transition: background 0.3s;
+}
+.floor-list::-webkit-scrollbar-thumb:hover {
+    background: var(--primary);
+}
+
 .floor-list-item {
     display: flex;
     align-items: center;
@@ -327,29 +360,45 @@
     border-radius: 6px;
     cursor: pointer;
     font-size: 1rem;
-    font-weight: 500;
-    transition: opacity 0.2s, transform 0.1s;
+    font-weight: 600;
+    transition: all 0.25s var(--ease);
     min-width: 36px;
     text-align: center;
-}
-
-.save-floor-btn:hover,
-.delete-floor-btn:hover {
-    transform: scale(1.05);
+    box-sizing: border-box;
 }
 
 .save-floor-btn {
     background: var(--primary);
-    color: #fff;
+    color: var(--bg);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.save-floor-btn:hover {
+    filter: brightness(110%);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.25);
+    transform: translateY(-1px) scale(1.05);
+}
+
+.save-floor-btn:active {
+    transform: translateY(0) scale(0.96);
 }
 
 .delete-floor-btn {
-    background: rgba(224, 108, 117, 0.2);
+    background: rgba(224, 108, 117, 0.15);
     color: #e06c75;
+    border: 1px solid rgba(224, 108, 117, 0.3);
 }
 
 .delete-floor-btn:hover {
-    background: rgba(224, 108, 117, 0.3);
+    background: #e06c75;
+    color: #fff;
+    border-color: #e06c75;
+    box-shadow: 0 4px 8px rgba(224, 108, 117, 0.3);
+    transform: translateY(-1px) scale(1.05);
+}
+
+.delete-floor-btn:active {
+    transform: translateY(0) scale(0.96);
 }
 
 .no-floors-msg {
@@ -417,17 +466,19 @@
 /* ==================== ERROR STATES ==================== */
 
 .error-banner {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
+    position: relative;
+    width: calc(100% - 2rem);
+    max-width: 1400px;
+    margin: 1rem auto 0 auto;
     background-color: #ff4444;
     color: white;
     text-align: center;
     padding: 1rem;
-    z-index: 1000;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     font-weight: 500;
+    border-radius: 8px;
+    box-sizing: border-box;
 }
 
 .error-banner.loading {

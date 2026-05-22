@@ -4,8 +4,8 @@ declare(strict_types=1);
 // Settings
 $config = [
     'snmp_community' => getenv('SNMP_COMMUNITY') ?: 'public',
-    'snmp_timeout' => 500000, // 0.5 seconds
-    'snmp_retries' => 2,
+    'snmp_timeout' => 200000, // 0.2 seconds (optimized for local network latency)
+    'snmp_retries' => 1,
     'cache_enabled' => true,
     'cache_ttl' => 300, // 5 minutes
 ];
@@ -31,7 +31,7 @@ $discovery = new PrinterDiscovery(
     $config['snmp_retries']
 );
 
-// Check if we should clear cache (from request parameter)
+// Check if we should clear cache (retained for compatibility, but we bypass sequential walks)
 if (isset($_GET['refresh']) && $_GET['refresh'] === '1') {
     $cacheManager->clear();
 }
@@ -46,38 +46,214 @@ $settings = $db->getSettings();
 
 $printers = [];
 
-// Process printers (with caching)
-$cacheKey = 'printers_data';
-if ($config['cache_enabled']) {
-    $cachedData = $cacheManager->get($cacheKey);
-    if (!empty($cachedData)) {
-        // If cached data exists, use it
-        // We need to merge cached data with DB data to ensure we have the latest DB changes
-        // But we want to keep the cached SNMP levels/status
-        $printers = $cachedData;
+if (empty($dbError)) {
+    foreach ($dbPrinters as $dbPrinter) {
+        $ip = $dbPrinter['ip'];
+        $lastLevels = !empty($dbPrinter['last_levels']) ? json_decode($dbPrinter['last_levels'], true) : null;
         
-        // Check if DB has changed (simple check: count)
-        // In a real app, we'd use timestamps or more complex logic
-        if (count($dbPrinters) !== count($printers)) {
-            $printers = []; // Force refresh if counts differ
-        }
+        // Initial state is "loading" (it will be refreshed via JS asynchronously)
+        $printers[$ip] = [
+            'info' => [
+                'id' => $dbPrinter['id'],
+                'ip' => $ip,
+                'last_updated' => time(),
+                'full_name' => $dbPrinter['name'] ?: ($dbPrinter['model'] ?: 'Unknown Printer'),
+                'description' => $dbPrinter['description'],
+                'purchase_url' => $dbPrinter['purchase_url'],
+                'serial_number' => $dbPrinter['serial'],
+                'model' => $dbPrinter['model'],
+                'last_levels' => $dbPrinter['last_levels'],
+                'floor_id' => $dbPrinter['floor_id'],
+                'status' => 'loading' // Loading state initially
+            ],
+            'levels' => $lastLevels ?: []
+        ];
     }
 }
 
-// If no printers are loaded (either no cache or cache invalidated) and no DB error
-if (empty($printers) && empty($dbError)) {
-    // Loop through each saved printer to get its live status
-    foreach ($dbPrinters as $dbPrinter) {
-        // Get live data (ink levels, online/offline) using SNMP
-        // This combines the database info (name, IP) with live info
-        $data = $discovery->getPrinterData($dbPrinter);
-        $printers[$dbPrinter['ip']] = $data; // Store printer data indexed by IP
+// Helper to clean up serial numbers on the fly
+function cleanSerialNumber(?string $serial): string {
+    if (!$serial) {
+        return 'N/A';
     }
     
-    // Cache the results if caching is enabled and we have data
-    if ($config['cache_enabled'] && !empty($printers)) {
-        $cacheManager->set($cacheKey, $printers);
+    if (preg_match('/^Hex-STRING:\s*/i', $serial)) {
+        $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $serial));
+        $hexBytes = str_replace(' ', '', $hexPart);
+        
+        $ascii = '';
+        $isPrintable = true;
+        for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+            $byte = hexdec(substr($hexBytes, $i, 2));
+            if ($byte < 32 || $byte > 126) {
+                $isPrintable = false;
+            }
+            $ascii .= chr($byte);
+        }
+        
+        if ($isPrintable && strlen($hexBytes) > 0) {
+            return trim($ascii);
+        }
+        
+        if (strlen($hexBytes) <= 8) {
+            return (string)hexdec($hexBytes);
+        }
+        
+        return $hexBytes;
     }
+    
+    if (preg_match('/^0x([0-9a-fA-F]+)$/i', $serial, $matches)) {
+        $hexBytes = $matches[1];
+        $ascii = '';
+        $isPrintable = true;
+        for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+            $byte = hexdec(substr($hexBytes, $i, 2));
+            if ($byte < 32 || $byte > 126) {
+                $isPrintable = false;
+            }
+            $ascii .= chr($byte);
+        }
+        if ($isPrintable && strlen($hexBytes) > 0) {
+            return trim($ascii);
+        }
+        return (string)hexdec($hexBytes);
+    }
+    
+    return $serial;
+}
+
+/**
+ * Render Levels Section HTML
+ * 
+ * Server-side helper to output printer ink/toner level meters.
+ * Mirrors the structure of renderLevelsSection in script.js to keep templates aligned.
+ */
+function renderLevelsSectionHtml(string $status, ?array $levels): string {
+    $html = '';
+    
+    if ($status === 'offline') {
+        $html .= '<div class="offline-message">Printer is currently offline</div>';
+        if ($levels && is_array($levels) && count($levels) > 0) {
+            $html .= '<div class="last-seen-levels">';
+            $html .= '<small>Last known levels:</small>';
+            foreach ($levels as $color => $level) {
+                $displayPercentage = ($level['percentage'] ?? 0) . '%';
+                $barWidth = max(0, $level['percentage'] ?? 0);
+                $specialClass = '';
+                
+                if (isset($level['status']) && $level['status'] === 'ok') {
+                    $displayPercentage = 'OK';
+                    $barWidth = 100;
+                } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
+                    $displayPercentage = 'Not Genuine / Empty Cartridge';
+                    $barWidth = 0;
+                    $specialClass = 'warning-level';
+                }
+                
+                $colorClean = htmlspecialchars($color);
+                $colorTitle = ucfirst($colorClean);
+                $html .= "
+                    <div class=\"level-bar faded {$specialClass}\">
+                        <div class=\"level-label\">
+                            <span>{$colorTitle}</span>
+                            <span>{$displayPercentage}</span>
+                        </div>
+                        <div class=\"level-container\">
+                            <div class=\"level-fill {$colorClean}-fill\" 
+                                 style=\"width: {$barWidth}%\"
+                                 data-level=\"{$barWidth}\">
+                            </div>
+                        </div>
+                    </div>";
+            }
+            $html .= '</div>';
+        }
+        return $html;
+    }
+    
+    if ($status === 'loading') {
+        if ($levels && is_array($levels) && count($levels) > 0) {
+            $html .= '<div class="last-seen-levels">';
+            $html .= '<small>Loading live levels...</small>';
+            foreach ($levels as $color => $level) {
+                $displayPercentage = ($level['percentage'] ?? 0) . '%';
+                $barWidth = max(0, $level['percentage'] ?? 0);
+                $specialClass = '';
+                
+                if (isset($level['status']) && $level['status'] === 'ok') {
+                    $displayPercentage = 'OK';
+                    $barWidth = 100;
+                } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
+                    $displayPercentage = 'Not Genuine / Empty Cartridge';
+                    $barWidth = 0;
+                    $specialClass = 'warning-level';
+                }
+                
+                $colorClean = htmlspecialchars($color);
+                $colorTitle = ucfirst($colorClean);
+                $html .= "
+                    <div class=\"level-bar faded {$specialClass}\">
+                        <div class=\"level-label\">
+                            <span>{$colorTitle}</span>
+                            <span>{$displayPercentage}</span>
+                        </div>
+                        <div class=\"level-container\">
+                            <div class=\"level-fill {$colorClean}-fill\" 
+                                 style=\"width: {$barWidth}%\"
+                                 data-level=\"{$barWidth}\">
+                            </div>
+                        </div>
+                    </div>";
+            }
+            $html .= '</div>';
+        } else {
+            $html .= '<div class="no-data-message pulse-loading">Checking printer status...</div>';
+        }
+        return $html;
+    }
+    
+    // Online state
+    if ($levels && is_array($levels) && count($levels) > 0) {
+        foreach ($levels as $color => $level) {
+            $displayPercentage = ($level['percentage'] ?? 0) . '%';
+            $barWidth = max(0, $level['percentage'] ?? 0);
+            $specialClass = '';
+            
+            if (isset($level['status']) && $level['status'] === 'ok') {
+                $displayPercentage = 'OK';
+                $barWidth = 100;
+            } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
+                $displayPercentage = 'Not Genuine / Empty Cartridge';
+                $barWidth = 0;
+                $specialClass = 'warning-level';
+            }
+            
+            $ariaLabel = '';
+            if (isset($level['current'], $level['max'])) {
+                $ariaLabel = 'aria-label="' . htmlspecialchars((string)$level['current']) . '/' . htmlspecialchars((string)$level['max']) . '"';
+            }
+            
+            $colorClean = htmlspecialchars($color);
+            $colorTitle = ucfirst($colorClean);
+            $html .= "
+                <div class=\"level-bar {$specialClass}\">
+                    <div class=\"level-label\">
+                        <span>{$colorTitle}</span>
+                        <span>{$displayPercentage}</span>
+                    </div>
+                    <div class=\"level-container\">
+                        <div class=\"level-fill {$colorClean}-fill\" 
+                             style=\"width: {$barWidth}%\"
+                             data-level=\"{$barWidth}\"
+                             {$ariaLabel}>
+                        </div>
+                    </div>
+                </div>";
+        }
+    } else {
+        $html .= '<div class="no-data-message">No ink/toner level data available</div>';
+    }
+    return $html;
 }
 
 // Set content type
@@ -114,7 +290,7 @@ header('Content-Type: text/html; charset=utf-8');
             </div>
         </div>
         <div class="search-container">
-            <input type="text" id="printerSearch" placeholder="⌛ Write here to search...">
+            <input type="text" id="printerSearch" placeholder="🔍 Search printers...">
         </div>
         <div class="header-controls">
             <button id="settingsBtn" class="settings-btn" title="Settings" aria-label="Open settings">
@@ -164,7 +340,6 @@ header('Content-Type: text/html; charset=utf-8');
                 <strong>⚠️</strong>
                 <?= htmlspecialchars($dbError) ?>
             </div>
-            <style>body { margin-top: 60px; }</style>
         <?php endif; ?>
     <?php endif; ?>
 
@@ -181,8 +356,8 @@ header('Content-Type: text/html; charset=utf-8');
             </div>
         <?php else: ?>
             <div class="refresh-panel">
-                <a href="?refresh=1" class="refresh-button">Refresh Printer Data</a>
-                <div class="last-refresh">Last updated: <?= date('Y-m-d H:i:s') ?></div>
+                <button id="refreshDataBtn" class="refresh-button">Refresh Printer Data</button>
+                <div class="last-refresh">Last updated: <span id="lastRefreshTime"><?= date('Y-m-d H:i:s') ?></span></div>
             </div>
             
             <div class="content-with-sidebar">
@@ -225,7 +400,7 @@ header('Content-Type: text/html; charset=utf-8');
                 $data['info']['id'] = $dbId;
                 $data['info']['floor_id'] = $floorId;
                 ?>
-                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?>" data-id="<?= $dbId ?>" data-ip="<?= $ip ?>" data-floor-id="<?= $floorId ?? '' ?>">
+                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?> <?= $printerStatus === 'loading' ? 'loading-state' : '' ?>" data-id="<?= $dbId ?>" data-ip="<?= $ip ?>" data-floor-id="<?= $floorId ?? '' ?>">
                     <div class="status-indicator <?= $printerStatus ?>"></div>
                     
 
@@ -234,88 +409,12 @@ header('Content-Type: text/html; charset=utf-8');
                     </div>
                     
                     <div class="info-item">
-                        <strong>Serial:</strong> <?= htmlspecialchars($data['info']['serial_number'] ?? 'N/A') ?>
+                        <strong>Serial:</strong> <span class="printer-serial"><?= htmlspecialchars(cleanSerialNumber($data['info']['serial_number'] ?? null)) ?></span>
                     </div>
 
-                    <?php if ($printerStatus === 'offline'): ?>
-                        <div class="offline-message">
-                            Printer is currently offline
-                        </div>
-                        <?php 
-                        // Check if we have last known levels in the database
-                        $lastLevels = !empty($data['info']['last_levels']) ? json_decode($data['info']['last_levels'], true) : null;
-                        
-                        if ($lastLevels && is_array($lastLevels)): 
-                        ?>
-                            <div class="last-seen-levels">
-                                <small>Last known levels:</small>
-                                <?php foreach ($lastLevels as $color => $level): ?>
-                                    <div class="level-bar faded">
-                                        <div class="level-label">
-                                            <span><?= ucfirst($color) ?></span>
-                                            <span><?= $level['percentage'] ?>%</span>
-                                        </div>
-                                        <div class="level-container">
-                                            <div class="level-fill <?= $color ?>-fill" 
-                                                 style="width: <?= $level['percentage'] ?>%"
-                                                 data-level="<?= $level['percentage'] ?>">
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <?php 
-                        // Check if levels exist AND have actual data
-                        // "No ink/toner level data available" = OIDs missing/unsupported model
-                        // 0% levels = Printer IS reporting, show "Not Genuine / Empty Cartridge"
-                        $hasLevels = isset($data['levels']) && is_array($data['levels']) && count($data['levels']) > 0;
-                        if ($hasLevels): 
-                            // Save these levels to the database for future offline use
-                            if ($dbId > 0) {
-                                $db->updatePrinterLevels($dbId, $data['levels']);
-                            }
-                        ?>
-                            <?php foreach ($data['levels'] as $color => $level): ?>
-                                <?php 
-                                // Determine display text based on status
-                                $displayPercentage = $level['percentage'] . '%';
-                                $barWidth = max(0, $level['percentage']);
-                                $specialClass = '';
-                                
-                                // Handle special statuses
-                                if (isset($level['status']) && $level['status'] === 'empty_or_not_genuine') {
-                                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                                    $barWidth = 0;
-                                    $specialClass = 'warning-level';
-                                } elseif ($level['percentage'] <= 0) {
-                                    // No status set but percentage is 0 or less
-                                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                                    $barWidth = 0;
-                                    $specialClass = 'warning-level';
-                                }
-                                ?>
-                                <div class="level-bar <?= $specialClass ?>">
-                                    <div class="level-label">
-                                        <span><?= ucfirst($color) ?></span>
-                                        <span><?= $displayPercentage ?></span>
-                                    </div>
-                                    <div class="level-container">
-                                        <div class="level-fill <?= $color ?>-fill" 
-                                             style="width: <?= $barWidth ?>%"
-                                             data-level="<?= $barWidth ?>"
-                                             aria-label="<?= $level['current'] ?>/<?= $level['max'] ?>">
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <div class="no-data-message">
-                                No ink/toner level data available
-                            </div>
-                        <?php endif; ?>
-                    <?php endif; ?>
+                    <div class="levels-section">
+                        <?= renderLevelsSectionHtml($printerStatus, $printerStatus === 'offline' ? (!empty($data['info']['last_levels']) ? json_decode($data['info']['last_levels'], true) : null) : ($data['levels'] ?? null)) ?>
+                    </div>
 
                     <div class="cube-bottom">
                         <?php if (!empty($data['info']['description'])): ?>

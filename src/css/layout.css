@@ -20,9 +20,8 @@
     padding: 0.3rem 1.5rem;
     margin: 0;
     width: 100%;
-    position: fixed;
+    position: sticky;
     top: 0;
-    left: 0;
     z-index: 100;
     display: flex;
     align-items: center;
@@ -125,8 +124,8 @@
     min-height: calc(100vh - 200px);
     max-width: 1400px;
     margin: 0 auto;
-    padding: 1rem;
-    margin-top: 1rem;
+    padding: 1rem 2rem;
+    margin-top: 0;
 }
 
 /* Content With Sidebar - flex row for sidebar + cubes */
@@ -172,6 +171,10 @@
 
 .floor-item:hover {
     background: rgba(127, 187, 179, 0.1);
+}
+
+.floor-item:active {
+    transform: scale(0.96);
 }
 
 .floor-item.active {
@@ -223,16 +226,25 @@
 .refresh-button {
     background: var(--primary);
     color: var(--bg);
-    padding: 0.5rem 1rem;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem 1.25rem;
     border-radius: 6px;
     text-decoration: none;
-    font-weight: 500;
+    font-weight: 600;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
     transition: all 0.3s var(--ease);
 }
 
 .refresh-button:hover {
     filter: brightness(110%);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.refresh-button:active {
+    transform: translateY(0) scale(0.97);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .last-refresh {

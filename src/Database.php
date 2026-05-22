@@ -57,6 +57,30 @@ class Database {
     }
 
     /**
+     * Begin Database Transaction
+     */
+    public function beginTransaction(): bool {
+        if (!$this->pdo) return false;
+        return $this->pdo->beginTransaction();
+    }
+
+    /**
+     * Commit Database Transaction
+     */
+    public function commit(): bool {
+        if (!$this->pdo) return false;
+        return $this->pdo->commit();
+    }
+
+    /**
+     * Rollback Database Transaction
+     */
+    public function rollBack(): bool {
+        if (!$this->pdo) return false;
+        return $this->pdo->rollBack();
+    }
+
+    /**
      * Initialize Schema
      * 
      * Creates all required tables if they don't exist yet.
@@ -213,6 +237,65 @@ class Database {
             ]);
         } catch (\PDOException $e) {
             $this->lastError = "Update failed: " . $e->getMessage();
+            return false;
+        }
+    }
+
+    /**
+     * Update a Printer Fully
+     * 
+     * Updates all details of an existing printer including model, serial, vendor, custom_oids, last_levels.
+     * Useful for import/restore operations.
+     * 
+     * @param int $id The ID of the printer to update
+     * @param array $data The new data
+     * @return bool True if successful
+     */
+    public function updatePrinterFully(int $id, array $data): bool {
+        if (!$this->pdo) {
+            if (!$this->lastError) $this->lastError = "Database not connected";
+            return false;
+        }
+
+        try {
+            $sql = "UPDATE printers SET 
+                    name = :name, 
+                    description = :description, 
+                    purchase_url = :purchase_url,
+                    floor_id = :floor_id,
+                    model = :model,
+                    serial = :serial,
+                    vendor = :vendor,
+                    custom_oids = :custom_oids,
+                    last_levels = :last_levels
+                    WHERE id = :id";
+            
+            $stmt = $this->pdo->prepare($sql);
+            
+            $customOids = null;
+            if (isset($data['custom_oids'])) {
+                $customOids = is_array($data['custom_oids']) ? json_encode($data['custom_oids']) : $data['custom_oids'];
+            }
+            
+            $lastLevels = null;
+            if (isset($data['last_levels'])) {
+                $lastLevels = is_array($data['last_levels']) ? json_encode($data['last_levels']) : $data['last_levels'];
+            }
+
+            return $stmt->execute([
+                ':id' => $id,
+                ':name' => $data['name'] ?? null,
+                ':description' => $data['description'] ?? null,
+                ':purchase_url' => $data['purchase_url'] ?? null,
+                ':floor_id' => !empty($data['floor_id']) ? (int)$data['floor_id'] : null,
+                ':model' => $data['model'] ?? null,
+                ':serial' => $data['serial'] ?? null,
+                ':vendor' => $data['vendor'] ?? null,
+                ':custom_oids' => $customOids,
+                ':last_levels' => $lastLevels
+            ]);
+        } catch (\PDOException $e) {
+            $this->lastError = "Full update failed: " . $e->getMessage();
             return false;
         }
     }
