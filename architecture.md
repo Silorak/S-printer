@@ -58,18 +58,16 @@ graph TD
 
 ```mermaid
 graph TD
-    A["🌐 HTTP GET /"] --> B["getPrinters()"]
-    B --> C["Database returns<br/>printer records<br/><i>IP, name, floor</i>"]
-    C --> D{"CacheManager<br/>get('printers_data')"}
-
-    D -->|"Cache Hit"| E["Use cached<br/>SNMP data"]
-    D -->|"Cache Miss"| F["For each printer:<br/>getPrinterData()"]
-
-    F --> G["SNMP query<br/><i>See 1.2.1 below</i>"]
-    G --> H["set('printers_data',<br/>data, TTL=5min)"]
-
-    E --> I["Render HTML<br/>printer cards"]
-    H --> I
+    A["🌐 HTTP GET /"] --> B["Load DB records<br/>printers, floors, settings"]
+    B --> C["Render card shells<br/>+ level JSON data attributes"]
+    C --> D["Bootstrap settings/floors<br/>window.__SPRINTER_BOOTSTRAP__"]
+    D --> E["script.js hydrates<br/>initial level sections"]
+    E --> F["refreshAllPrinters()<br/><i>concurrency limit: 4</i>"]
+    F --> G["api.php?action=refresh_printer"]
+    G --> H["DB lookup by IP"]
+    H --> I["SNMP query<br/><i>See 1.2.1 below</i>"]
+    I --> J["Return JSON<br/>status + levels"]
+    J --> K["DOM renderer updates<br/>card status and levels"]
 ```
 
 #### 1.2.1 SNMP Query Detail (per printer)
@@ -695,11 +693,18 @@ sendError('Failed to add printer. The IP may already exist.');
 ### 6.6 Client-Side XSS Prevention
 
 ```javascript
-// Safe HTML escaping for dynamic content
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;   // textContent never parses HTML
-    return div.innerHTML;
+// Safe DOM construction for dynamic content
+function createTextMessage(className, text) {
+    const message = document.createElement('div');
+    message.className = className;
+    message.textContent = text; // textContent never parses HTML
+    return message;
+}
+
+function renderLevelsSection(levelsSection, status, levels, lastLevels) {
+    const fragment = document.createDocumentFragment();
+    // append level/message nodes with DOM APIs...
+    levelsSection.replaceChildren(fragment);
 }
 ```
 

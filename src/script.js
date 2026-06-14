@@ -4,33 +4,101 @@
  * @author Sprinter Team
  */
 
-/**
- * Initialize all functionality when DOM is ready.
- * Fetches settings and floors from API before applying them.
- */
-document.addEventListener('DOMContentLoaded', async function () {
-    // Fetch app data from API (cleaner than inline scripts)
+const MAX_IMPORT_FILE_BYTES = 2097152; // Keep client import cap aligned with api.php
+let isRefreshingAllPrinters = false;
+
+function getActiveFloorId() {
+    const activeFloor = document.querySelector('.floor-item.active');
+    return activeFloor?.dataset.floorId || localStorage.getItem('activeFloor') || 'all';
+}
+
+function matchesActiveFloor(cube, floorId = getActiveFloorId()) {
+    return floorId === 'all' || (cube.dataset.floorId || '') === floorId;
+}
+
+
+async function initializeAppData() {
+    const bootstrap = window.__SPRINTER_BOOTSTRAP__ || {};
+    const hasSettings = bootstrap.settings && typeof bootstrap.settings === 'object';
+    const hasFloors = Array.isArray(bootstrap.floors);
+
+    window.appSettings = hasSettings ? bootstrap.settings : {};
+    window.appFloors = hasFloors ? bootstrap.floors : [];
+
+    if (hasSettings && hasFloors) {
+        return;
+    }
+
     try {
-        const [settingsRes, floorsRes] = await Promise.all([
-            fetch('api.php?action=get_settings'),
-            fetch('api.php?action=get_floors')
-        ]);
+        const settingsRes = await fetch('api.php?action=get_settings');
+        const floorsRes = await fetch('api.php?action=get_floors');
         const settingsData = await settingsRes.json();
         const floorsData = await floorsRes.json();
 
-        window.appSettings = settingsData.success ? settingsData.data : {};
-        window.appFloors = floorsData.success ? floorsData.data : [];
+        window.appSettings = settingsData.success ? settingsData.data : window.appSettings;
+        window.appFloors = floorsData.success ? floorsData.data : window.appFloors;
     } catch (e) {
-        // Fallback to empty if API fails
-        window.appSettings = {};
-        window.appFloors = [];
+        // Keep bootstrap/default values if fallback API requests fail.
     }
+}
 
-    // Apply width to level bars via JavaScript to avoid inline styles
-    document.querySelectorAll('.level-fill').forEach(function (fill) {
-        const level = fill.getAttribute('data-level') || '0';
-        fill.style.width = level + '%';
+function parseJsonDataAttribute(element, attributeName, fallback) {
+    const raw = element.dataset[attributeName];
+    if (!raw) return fallback;
+
+    try {
+        const parsed = JSON.parse(raw);
+        return parsed === null ? fallback : parsed;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+function hydrateInitialLevelSections() {
+    document.querySelectorAll('.levels-section').forEach(levelsSection => {
+        const status = levelsSection.dataset.initialStatus || 'loading';
+        const levels = parseJsonDataAttribute(levelsSection, 'initialLevels', {});
+        const lastLevels = parseJsonDataAttribute(levelsSection, 'initialLastLevels', null);
+        renderLevelsSection(levelsSection, status, levels, lastLevels);
     });
+}
+
+function createFloorListItem(id, name) {
+    const li = document.createElement('li');
+    li.className = 'floor-list-item';
+    li.dataset.floorId = String(id);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'floor-name-input';
+    input.value = name;
+
+    const saveButton = document.createElement('button');
+    saveButton.type = 'button';
+    saveButton.className = 'save-floor-btn secondary-btn';
+    saveButton.title = 'Save';
+    saveButton.textContent = '✓';
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'delete-floor-btn danger-btn';
+    deleteButton.title = 'Delete';
+    deleteButton.textContent = '×';
+
+    li.append(input, saveButton, deleteButton);
+    return li;
+}
+
+/**
+ * Initialize all functionality when DOM is ready.
+ * Uses server bootstrap data first, then hydrates JS-owned level sections.
+ */
+document.addEventListener('DOMContentLoaded', async function () {
+    // Use server bootstrap data first; fall back to API only when bootstrap is missing.
+    await initializeAppData();
+
+    // JS owns initial level rendering so PHP and JS templates cannot drift.
+    hydrateInitialLevelSections();
 
     // Theme switching
     setupThemeToggle();
@@ -115,11 +183,13 @@ function setupSearch() {
     // Don't create search no-results if no printers exist
     const noResultsElement = document.createElement('div');
     noResultsElement.className = 'empty-state-box no-results search-no-results';
-    noResultsElement.innerHTML = `
-        <strong>No printers found</strong>
-        <p>No printers match your search criteria.</p>
-        <p>Try using different keywords or clear the search.</p>
-    `;
+    const noResultsTitle = document.createElement('strong');
+    noResultsTitle.textContent = 'No printers found';
+    const noResultsHint = document.createElement('p');
+    noResultsHint.textContent = 'No printers match your search criteria.';
+    const noResultsClearHint = document.createElement('p');
+    noResultsClearHint.textContent = 'Try using different keywords or clear the search.';
+    noResultsElement.append(noResultsTitle, noResultsHint, noResultsClearHint);
     noResultsElement.style.display = 'none'; // Hide initially
 
     // Only add to container if there are printers to search
@@ -130,6 +200,9 @@ function setupSearch() {
     searchInput.addEventListener('input', function (e) {
         const searchTerm = e.target.value.toLowerCase();
         const container = document.querySelector('.container');
+        if (!container) return;
+
+        const activeFloorId = getActiveFloorId();
         const cubes = Array.from(container.getElementsByClassName('cube')).filter(cube =>
             !cube.classList.contains('no-results') && !cube.classList.contains('floor-empty-state')
         );
@@ -138,13 +211,13 @@ function setupSearch() {
         let visibleCount = 0;
         let delay = 0;
 
-        // Sort cubes based on match relevance: exact matches first, then partial, then no match
+        // Sort cubes based on match relevance within the active floor.
         cubes.sort((a, b) => {
             const aText = a.textContent.toLowerCase();
             const bText = b.textContent.toLowerCase();
 
-            const aIncludes = aText.includes(searchTerm);
-            const bIncludes = bText.includes(searchTerm);
+            const aIncludes = matchesActiveFloor(a, activeFloorId) && aText.includes(searchTerm);
+            const bIncludes = matchesActiveFloor(b, activeFloorId) && bText.includes(searchTerm);
 
             // Prioritize cubes that include the search term
             if (aIncludes && !bIncludes) return -1;
@@ -152,10 +225,11 @@ function setupSearch() {
             return 0; // Maintain original order if both or neither include the term
         });
 
-        // Reorder and filter cubes based on search term with animations
+        // Reorder and filter cubes based on active floor + search term with animations
         cubes.forEach(cube => {
             const cubeText = cube.textContent.toLowerCase();
-            const hasMatch = searchTerm === '' || cubeText.includes(searchTerm);
+            const floorMatch = matchesActiveFloor(cube, activeFloorId);
+            const hasMatch = floorMatch && (searchTerm === '' || cubeText.includes(searchTerm));
 
             if (hasMatch) {
                 // Force animation replay: remove class, trigger reflow, then add
@@ -366,13 +440,17 @@ function setupForm() {
 }
 
 /**
- * Deletes a printer from the database instantly without confirmation.
+ * Deletes a printer from the database after user confirmation.
  * Removes the printer card from DOM on success.
  * @async
  * @param {number} id - The printer ID to delete
  * @returns {Promise<void>}
  */
 async function deletePrinter(id) {
+    if (!confirm('Delete this printer? This cannot be undone.')) {
+        return;
+    }
+
     try {
         const response = await fetch('api.php?action=delete_printer', {
             method: 'POST',
@@ -458,6 +536,12 @@ function setupImportExport() {
     importFile.onchange = function (event) {
         const file = event.target.files[0];
         if (!file) return;
+
+        if (file.size > MAX_IMPORT_FILE_BYTES) {
+            alert('Import file is too large. Maximum allowed size is 2 MiB.');
+            importFile.value = '';
+            return;
+        }
 
         const reader = new FileReader();
         reader.onload = async function (e) {
@@ -602,15 +686,8 @@ function setupFloorManagement() {
                 const result = await response.json();
 
                 if (result.success) {
-                    // Add to list
-                    const li = document.createElement('li');
-                    li.className = 'floor-list-item';
-                    li.dataset.floorId = result.data.id;
-                    li.innerHTML = `
-                        <input type="text" class="floor-name-input" value="${escapeHtml(name)}">
-                        <button type="button" class="save-floor-btn secondary-btn" title="Save">✓</button>
-                        <button type="button" class="delete-floor-btn danger-btn" title="Delete">×</button>
-                    `;
+                    // Add to list without parsing user-controlled text as HTML
+                    const li = createFloorListItem(result.data.id, name);
                     floorList.appendChild(li);
 
                     // Clear input
@@ -663,6 +740,10 @@ function setupFloorManagement() {
                 }
             } else if (btn.classList.contains('delete-floor-btn')) {
                 // Delete floor
+                if (!confirm('Delete this floor? Printers assigned to it will become unassigned.')) {
+                    return;
+                }
+
                 try {
                     const response = await fetch('api.php?action=delete_floor', {
                         method: 'POST',
@@ -705,14 +786,14 @@ async function saveDisplaySettings() {
         const result = await response.json();
 
         if (result.success) {
-            // Apply settings immediately
-            applyDisplaySettings();
-
-            // Update global settings
+            // Update global settings before applying them to the DOM
             window.appSettings = {
                 hide_ip: hideIp ? '1' : '0',
                 show_serial: showSerial ? '1' : '0'
             };
+
+            // Apply settings immediately
+            applyDisplaySettings();
 
             alert('Settings saved!');
         } else {
@@ -804,11 +885,16 @@ function setActiveFloor(floorId) {
         if (!floorEmptyMsg) {
             floorEmptyMsg = document.createElement('div');
             floorEmptyMsg.className = 'empty-state-box floor-empty-state';
-            floorEmptyMsg.innerHTML = `
-                <strong>No printers on this floor</strong>
-                <p>This floor doesn't have any printers assigned yet.</p>
-                <p>Click the <strong>+</strong> button to add a printer, then assign it to this floor.</p>
-            `;
+            const title = document.createElement('strong');
+            title.textContent = 'No printers on this floor';
+            const hint = document.createElement('p');
+            hint.textContent = "This floor doesn't have any printers assigned yet.";
+            const addHint = document.createElement('p');
+            addHint.append('Click the ');
+            const plus = document.createElement('strong');
+            plus.textContent = '+';
+            addHint.append(plus, ' button to add a printer, then assign it to this floor.');
+            floorEmptyMsg.append(title, hint, addHint);
             const container = document.querySelector('.container');
             if (container) container.appendChild(floorEmptyMsg);
         }
@@ -851,73 +937,6 @@ function applyDisplaySettings() {
 // ==================== HELPERS ====================
 
 /**
- * Escapes HTML entities to prevent XSS.
- * @param {string} text - The text to escape
- * @returns {string} The escaped text
- */
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-/**
- * Cleans up serial numbers.
- * @param {string|null} serial - The raw serial number
- * @returns {string} The cleaned serial number
- */
-function cleanSerialNumber(serial) {
-    if (!serial) {
-        return 'N/A';
-    }
-    
-    if (/^Hex-STRING:\s*/i.test(serial)) {
-        let hexPart = serial.replace(/^Hex-STRING:\s*/i, '').trim();
-        let hexBytes = hexPart.replace(/\s+/g, '');
-        
-        let ascii = '';
-        let isPrintable = true;
-        for (let i = 0; i < hexBytes.length; i += 2) {
-            let byte = parseInt(hexBytes.substr(i, 2), 16);
-            if (byte < 32 || byte > 126) {
-                isPrintable = false;
-            }
-            ascii += String.fromCharCode(byte);
-        }
-        
-        if (isPrintable && hexBytes.length > 0) {
-            return ascii.trim();
-        }
-        
-        if (hexBytes.length <= 8) {
-            return parseInt(hexBytes, 16).toString();
-        }
-        
-        return hexBytes;
-    }
-    
-    let hexMatch = serial.match(/^0x([0-9a-fA-F]+)$/i);
-    if (hexMatch) {
-        let hexBytes = hexMatch[1];
-        let ascii = '';
-        let isPrintable = true;
-        for (let i = 0; i < hexBytes.length; i += 2) {
-            let byte = parseInt(hexBytes.substr(i, 2), 16);
-            if (byte < 32 || byte > 126) {
-                isPrintable = false;
-            }
-            ascii += String.fromCharCode(byte);
-        }
-        if (isPrintable && hexBytes.length > 0) {
-            return ascii.trim();
-        }
-        return parseInt(hexBytes, 16).toString();
-    }
-    
-    return serial;
-}
-
-/**
  * Capitalizes the first letter of a string.
  * @param {string} string - The string to capitalize
  * @returns {string} The capitalized string
@@ -928,141 +947,126 @@ function capitalizeFirstLetter(string) {
 }
 
 /**
- * Renders the levels section HTML.
+ * Safely renders a level-bar element using DOM APIs.
+ * @param {string} color - Supply color/name
+ * @param {Object} level - Supply level metadata
+ * @param {boolean} faded - Whether to render as last-known/faded data
+ * @returns {HTMLElement} The rendered level bar
+ */
+function createLevelBar(color, level = {}, faded = false) {
+    const normalizedLevel = Number(level.percentage ?? 0);
+    let displayPercentage = `${Number.isFinite(normalizedLevel) ? normalizedLevel : 0}%`;
+    let barWidth = Math.max(0, Number.isFinite(normalizedLevel) ? normalizedLevel : 0);
+    const isOk = level.status === 'ok';
+    const isEmpty = level.status === 'empty_or_not_genuine' || normalizedLevel <= 0;
+
+    if (isOk) {
+        displayPercentage = 'OK';
+        barWidth = 100;
+    } else if (isEmpty) {
+        displayPercentage = 'Not Genuine / Empty Cartridge';
+        barWidth = 0;
+    }
+
+    const levelBar = document.createElement('div');
+    levelBar.classList.add('level-bar');
+    if (faded) levelBar.classList.add('faded');
+    if (isEmpty) levelBar.classList.add('warning-level');
+
+    const label = document.createElement('div');
+    label.className = 'level-label';
+
+    const colorLabel = document.createElement('span');
+    colorLabel.textContent = capitalizeFirstLetter(String(color));
+
+    const percentageLabel = document.createElement('span');
+    percentageLabel.textContent = displayPercentage;
+
+    label.append(colorLabel, percentageLabel);
+
+    const container = document.createElement('div');
+    container.className = 'level-container';
+
+    const fill = document.createElement('div');
+    const colorToken = String(color).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+    fill.classList.add('level-fill', `${colorToken}-fill`);
+    fill.dataset.level = String(barWidth);
+    fill.style.width = `${barWidth}%`;
+
+    if (level.current !== undefined && level.max !== undefined) {
+        fill.setAttribute('aria-label', `${level.current}/${level.max}`);
+    }
+
+    container.appendChild(fill);
+    levelBar.append(label, container);
+    return levelBar;
+}
+
+function hasLevelEntries(levels) {
+    return levels && typeof levels === 'object' && Object.keys(levels).length > 0;
+}
+
+function createTextMessage(className, text) {
+    const message = document.createElement('div');
+    message.className = className;
+    message.textContent = text;
+    return message;
+}
+
+function createLastSeenLevels(labelText, levels, faded = true) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'last-seen-levels';
+
+    const label = document.createElement('small');
+    label.textContent = labelText;
+    wrapper.appendChild(label);
+
+    for (const [color, level] of Object.entries(levels)) {
+        wrapper.appendChild(createLevelBar(color, level, faded));
+    }
+
+    return wrapper;
+}
+
+/**
+ * Renders the levels section with DOM APIs instead of HTML strings.
+ * @param {HTMLElement} levelsSection - Target levels container
  * @param {string} status - Printer status
  * @param {Object} levels - Printer supply levels
  * @param {Object|null} lastLevels - Last known levels from DB
- * @returns {string} The levels section HTML
+ * @returns {void}
  */
-function renderLevelsSection(status, levels, lastLevels) {
+function renderLevelsSection(levelsSection, status, levels, lastLevels) {
+    const fragment = document.createDocumentFragment();
+
     if (status === 'offline') {
-        let html = '<div class="offline-message">Printer is currently offline</div>';
-        if (lastLevels && typeof lastLevels === 'object' && Object.keys(lastLevels).length > 0) {
-            html += '<div class="last-seen-levels">';
-            html += '<small>Last known levels:</small>';
-            for (const [color, level] of Object.entries(lastLevels)) {
-                let displayPercentage = level.percentage + '%';
-                let barWidth = Math.max(0, level.percentage);
-                let specialClass = '';
-                
-                if (level.status === 'ok') {
-                    displayPercentage = 'OK';
-                    barWidth = 100;
-                } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
-                    displayPercentage = 'Not Genuine / Empty Cartridge';
-                    barWidth = 0;
-                    specialClass = 'warning-level';
-                }
-                
-                html += `
-                    <div class="level-bar faded ${specialClass}">
-                        <div class="level-label">
-                            <span>${capitalizeFirstLetter(color)}</span>
-                            <span>${displayPercentage}</span>
-                        </div>
-                        <div class="level-container">
-                            <div class="level-fill ${color}-fill" 
-                                 style="width: ${barWidth}%"
-                                 data-level="${barWidth}">
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }
-            html += '</div>';
+        fragment.appendChild(createTextMessage('offline-message', 'Printer is currently offline'));
+        if (hasLevelEntries(lastLevels)) {
+            fragment.appendChild(createLastSeenLevels('Last known levels:', lastLevels, true));
         }
-        return html;
+        levelsSection.replaceChildren(fragment);
+        return;
     }
-    
+
     if (status === 'loading') {
-        let html = '';
-        if (levels && typeof levels === 'object' && Object.keys(levels).length > 0) {
-            html += '<div class="last-seen-levels">';
-            html += '<small>Loading live levels...</small>';
-            for (const [color, level] of Object.entries(levels)) {
-                let displayPercentage = level.percentage + '%';
-                let barWidth = Math.max(0, level.percentage);
-                let specialClass = '';
-                
-                if (level.status === 'ok') {
-                    displayPercentage = 'OK';
-                    barWidth = 100;
-                } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
-                    displayPercentage = 'Not Genuine / Empty Cartridge';
-                    barWidth = 0;
-                    specialClass = 'warning-level';
-                }
-                
-                html += `
-                    <div class="level-bar faded ${specialClass}">
-                        <div class="level-label">
-                            <span>${capitalizeFirstLetter(color)}</span>
-                            <span>${displayPercentage}</span>
-                        </div>
-                        <div class="level-container">
-                            <div class="level-fill ${color}-fill" 
-                                 style="width: ${barWidth}%"
-                                 data-level="${barWidth}">
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }
-            html += '</div>';
+        if (hasLevelEntries(levels)) {
+            fragment.appendChild(createLastSeenLevels('Loading live levels...', levels, true));
         } else {
-            html += `
-                <div class="no-data-message pulse-loading">
-                    Checking printer status...
-                </div>
-            `;
+            fragment.appendChild(createTextMessage('no-data-message pulse-loading', 'Checking printer status...'));
         }
-        return html;
+        levelsSection.replaceChildren(fragment);
+        return;
     }
-    
-    // Online state
-    let html = '';
-    const hasLevels = levels && typeof levels === 'object' && Object.keys(levels).length > 0;
-    if (hasLevels) {
+
+    if (hasLevelEntries(levels)) {
         for (const [color, level] of Object.entries(levels)) {
-            let displayPercentage = level.percentage + '%';
-            let barWidth = Math.max(0, level.percentage);
-            let specialClass = '';
-            
-            if (level.status === 'ok') {
-                displayPercentage = 'OK';
-                barWidth = 100;
-            } else if (level.status === 'empty_or_not_genuine' || level.percentage <= 0) {
-                displayPercentage = 'Not Genuine / Empty Cartridge';
-                barWidth = 0;
-                specialClass = 'warning-level';
-            }
-            
-            let ariaLabel = (level.current !== undefined && level.max !== undefined) ? `aria-label="${level.current}/${level.max}"` : '';
-            
-            html += `
-                <div class="level-bar ${specialClass}">
-                    <div class="level-label">
-                        <span>${capitalizeFirstLetter(color)}</span>
-                        <span>${displayPercentage}</span>
-                    </div>
-                    <div class="level-container">
-                        <div class="level-fill ${color}-fill" 
-                             style="width: ${barWidth}%"
-                             data-level="${barWidth}"
-                             ${ariaLabel}>
-                        </div>
-                    </div>
-                </div>
-            `;
+            fragment.appendChild(createLevelBar(color, level, false));
         }
     } else {
-        html += `
-            <div class="no-data-message">
-                No ink/toner level data available
-            </div>
-        `;
+        fragment.appendChild(createTextMessage('no-data-message', 'No ink/toner level data available'));
     }
-    return html;
+
+    levelsSection.replaceChildren(fragment);
 }
 
 /**
@@ -1106,8 +1110,8 @@ async function refreshPrinterCard(cube) {
             
             // 3. Update serial if available
             const serialSpan = cube.querySelector('.printer-serial');
-            if (serialSpan && info.serial_number) {
-                serialSpan.textContent = cleanSerialNumber(info.serial_number);
+            if (serialSpan) {
+                serialSpan.textContent = info.serial_number_display || info.serial_number || 'N/A';
             }
             
             // 4. Parse last_levels if offline
@@ -1118,18 +1122,13 @@ async function refreshPrinterCard(cube) {
                 } catch (e) {}
             }
             
-            // 5. Update level section HTML
+            // 5. Update level section via DOM-safe renderer
             const levelsSection = cube.querySelector('.levels-section');
             if (levelsSection) {
-                levelsSection.innerHTML = renderLevelsSection(status, levels, lastLevels);
-                
-                // Trigger transitions/widths on any newly added level fills
-                levelsSection.querySelectorAll('.level-fill').forEach(fill => {
-                    const val = fill.getAttribute('data-level') || '0';
-                    // Force reflow and set width
-                    void fill.offsetWidth;
-                    fill.style.width = val + '%';
-                });
+                levelsSection.dataset.initialStatus = status;
+                levelsSection.dataset.initialLevels = JSON.stringify(levels);
+                levelsSection.dataset.initialLastLevels = JSON.stringify(lastLevels);
+                renderLevelsSection(levelsSection, status, levels, lastLevels);
             }
             
             // 6. Update edit button click handler
@@ -1205,36 +1204,42 @@ async function throttlePromises(tasks, limit) {
  * @returns {Promise<void>}
  */
 async function refreshAllPrinters() {
+    if (isRefreshingAllPrinters) return;
+
     const cubes = document.querySelectorAll('.cube:not(.no-results):not(.floor-empty-state)');
     if (cubes.length === 0) return;
-    
+
+    isRefreshingAllPrinters = true;
     const refreshBtn = document.getElementById('refreshDataBtn');
     if (refreshBtn) {
         refreshBtn.disabled = true;
         refreshBtn.textContent = 'Refreshing...';
     }
-    
-    // Map each cube to its refresh task and run them with concurrency limit of 4
-    const tasks = Array.from(cubes).map(cube => () => refreshPrinterCard(cube));
-    
-    // Wait for all to complete using the high-performance Promise Throttle Pool
-    await throttlePromises(tasks, 4);
-    
-    // Update the last updated time
-    const lastRefreshTime = document.getElementById('lastRefreshTime');
-    if (lastRefreshTime) {
-        const now = new Date();
-        const yyyy = now.getFullYear();
-        const mm = String(now.getMonth() + 1).padStart(2, '0');
-        const dd = String(now.getDate()).padStart(2, '0');
-        const hh = String(now.getHours()).padStart(2, '0');
-        const min = String(now.getMinutes()).padStart(2, '0');
-        const ss = String(now.getSeconds()).padStart(2, '0');
-        lastRefreshTime.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
-    }
-    
-    if (refreshBtn) {
-        refreshBtn.disabled = false;
-        refreshBtn.textContent = 'Refresh Printer Data';
+
+    try {
+        // Map each cube to its refresh task and run them with concurrency limit of 4
+        const tasks = Array.from(cubes).map(cube => () => refreshPrinterCard(cube));
+
+        // Wait for all to complete using the high-performance Promise Throttle Pool
+        await throttlePromises(tasks, 4);
+
+        // Update the last updated time
+        const lastRefreshTime = document.getElementById('lastRefreshTime');
+        if (lastRefreshTime) {
+            const now = new Date();
+            const yyyy = now.getFullYear();
+            const mm = String(now.getMonth() + 1).padStart(2, '0');
+            const dd = String(now.getDate()).padStart(2, '0');
+            const hh = String(now.getHours()).padStart(2, '0');
+            const min = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            lastRefreshTime.textContent = `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+        }
+    } finally {
+        isRefreshingAllPrinters = false;
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = 'Refresh Printer Data';
+        }
     }
 }

@@ -14,6 +14,7 @@ $config = [
 require_once 'PrinterDiscovery.php';
 require_once 'CacheManager.php';
 require_once 'Database.php';
+require_once 'Formatting.php';
 
 // Security headers
 header("X-Content-Type-Options: nosniff");
@@ -61,6 +62,7 @@ if (empty($dbError)) {
                 'description' => $dbPrinter['description'],
                 'purchase_url' => $dbPrinter['purchase_url'],
                 'serial_number' => $dbPrinter['serial'],
+                'serial_number_display' => cleanSerialNumberForDisplay($dbPrinter['serial'] ?? null),
                 'model' => $dbPrinter['model'],
                 'last_levels' => $dbPrinter['last_levels'],
                 'floor_id' => $dbPrinter['floor_id'],
@@ -69,191 +71,6 @@ if (empty($dbError)) {
             'levels' => $lastLevels ?: []
         ];
     }
-}
-
-// Helper to clean up serial numbers on the fly
-function cleanSerialNumber(?string $serial): string {
-    if (!$serial) {
-        return 'N/A';
-    }
-    
-    if (preg_match('/^Hex-STRING:\s*/i', $serial)) {
-        $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $serial));
-        $hexBytes = str_replace(' ', '', $hexPart);
-        
-        $ascii = '';
-        $isPrintable = true;
-        for ($i = 0; $i < strlen($hexBytes); $i += 2) {
-            $byte = hexdec(substr($hexBytes, $i, 2));
-            if ($byte < 32 || $byte > 126) {
-                $isPrintable = false;
-            }
-            $ascii .= chr($byte);
-        }
-        
-        if ($isPrintable && strlen($hexBytes) > 0) {
-            return trim($ascii);
-        }
-        
-        if (strlen($hexBytes) <= 8) {
-            return (string)hexdec($hexBytes);
-        }
-        
-        return $hexBytes;
-    }
-    
-    if (preg_match('/^0x([0-9a-fA-F]+)$/i', $serial, $matches)) {
-        $hexBytes = $matches[1];
-        $ascii = '';
-        $isPrintable = true;
-        for ($i = 0; $i < strlen($hexBytes); $i += 2) {
-            $byte = hexdec(substr($hexBytes, $i, 2));
-            if ($byte < 32 || $byte > 126) {
-                $isPrintable = false;
-            }
-            $ascii .= chr($byte);
-        }
-        if ($isPrintable && strlen($hexBytes) > 0) {
-            return trim($ascii);
-        }
-        return (string)hexdec($hexBytes);
-    }
-    
-    return $serial;
-}
-
-/**
- * Render Levels Section HTML
- * 
- * Server-side helper to output printer ink/toner level meters.
- * Mirrors the structure of renderLevelsSection in script.js to keep templates aligned.
- */
-function renderLevelsSectionHtml(string $status, ?array $levels): string {
-    $html = '';
-    
-    if ($status === 'offline') {
-        $html .= '<div class="offline-message">Printer is currently offline</div>';
-        if ($levels && is_array($levels) && count($levels) > 0) {
-            $html .= '<div class="last-seen-levels">';
-            $html .= '<small>Last known levels:</small>';
-            foreach ($levels as $color => $level) {
-                $displayPercentage = ($level['percentage'] ?? 0) . '%';
-                $barWidth = max(0, $level['percentage'] ?? 0);
-                $specialClass = '';
-                
-                if (isset($level['status']) && $level['status'] === 'ok') {
-                    $displayPercentage = 'OK';
-                    $barWidth = 100;
-                } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
-                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                    $barWidth = 0;
-                    $specialClass = 'warning-level';
-                }
-                
-                $colorClean = htmlspecialchars($color);
-                $colorTitle = ucfirst($colorClean);
-                $html .= "
-                    <div class=\"level-bar faded {$specialClass}\">
-                        <div class=\"level-label\">
-                            <span>{$colorTitle}</span>
-                            <span>{$displayPercentage}</span>
-                        </div>
-                        <div class=\"level-container\">
-                            <div class=\"level-fill {$colorClean}-fill\" 
-                                 style=\"width: {$barWidth}%\"
-                                 data-level=\"{$barWidth}\">
-                            </div>
-                        </div>
-                    </div>";
-            }
-            $html .= '</div>';
-        }
-        return $html;
-    }
-    
-    if ($status === 'loading') {
-        if ($levels && is_array($levels) && count($levels) > 0) {
-            $html .= '<div class="last-seen-levels">';
-            $html .= '<small>Loading live levels...</small>';
-            foreach ($levels as $color => $level) {
-                $displayPercentage = ($level['percentage'] ?? 0) . '%';
-                $barWidth = max(0, $level['percentage'] ?? 0);
-                $specialClass = '';
-                
-                if (isset($level['status']) && $level['status'] === 'ok') {
-                    $displayPercentage = 'OK';
-                    $barWidth = 100;
-                } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
-                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                    $barWidth = 0;
-                    $specialClass = 'warning-level';
-                }
-                
-                $colorClean = htmlspecialchars($color);
-                $colorTitle = ucfirst($colorClean);
-                $html .= "
-                    <div class=\"level-bar faded {$specialClass}\">
-                        <div class=\"level-label\">
-                            <span>{$colorTitle}</span>
-                            <span>{$displayPercentage}</span>
-                        </div>
-                        <div class=\"level-container\">
-                            <div class=\"level-fill {$colorClean}-fill\" 
-                                 style=\"width: {$barWidth}%\"
-                                 data-level=\"{$barWidth}\">
-                            </div>
-                        </div>
-                    </div>";
-            }
-            $html .= '</div>';
-        } else {
-            $html .= '<div class="no-data-message pulse-loading">Checking printer status...</div>';
-        }
-        return $html;
-    }
-    
-    // Online state
-    if ($levels && is_array($levels) && count($levels) > 0) {
-        foreach ($levels as $color => $level) {
-            $displayPercentage = ($level['percentage'] ?? 0) . '%';
-            $barWidth = max(0, $level['percentage'] ?? 0);
-            $specialClass = '';
-            
-            if (isset($level['status']) && $level['status'] === 'ok') {
-                $displayPercentage = 'OK';
-                $barWidth = 100;
-            } elseif ((isset($level['status']) && $level['status'] === 'empty_or_not_genuine') || ($level['percentage'] ?? 0) <= 0) {
-                $displayPercentage = 'Not Genuine / Empty Cartridge';
-                $barWidth = 0;
-                $specialClass = 'warning-level';
-            }
-            
-            $ariaLabel = '';
-            if (isset($level['current'], $level['max'])) {
-                $ariaLabel = 'aria-label="' . htmlspecialchars((string)$level['current']) . '/' . htmlspecialchars((string)$level['max']) . '"';
-            }
-            
-            $colorClean = htmlspecialchars($color);
-            $colorTitle = ucfirst($colorClean);
-            $html .= "
-                <div class=\"level-bar {$specialClass}\">
-                    <div class=\"level-label\">
-                        <span>{$colorTitle}</span>
-                        <span>{$displayPercentage}</span>
-                    </div>
-                    <div class=\"level-container\">
-                        <div class=\"level-fill {$colorClean}-fill\" 
-                             style=\"width: {$barWidth}%\"
-                             data-level=\"{$barWidth}\"
-                             {$ariaLabel}>
-                        </div>
-                    </div>
-                </div>";
-        }
-    } else {
-        $html .= '<div class="no-data-message">No ink/toner level data available</div>';
-    }
-    return $html;
 }
 
 // Set content type
@@ -395,12 +212,21 @@ header('Content-Type: text/html; charset=utf-8');
                 
                 // Check printer status - will be 'online' or 'offline'
                 $printerStatus = $data['info']['status'] ?? 'online';
+                $initialLevels = $data['levels'] ?? [];
+                if (!is_array($initialLevels)) {
+                    $initialLevels = [];
+                }
+                $initialLastLevels = !empty($data['info']['last_levels']) ? json_decode((string)$data['info']['last_levels'], true) : null;
+                if (!is_array($initialLastLevels)) {
+                    $initialLastLevels = null;
+                }
                 
-                // Ensure ID and floor_id are in the info array for the edit modal
+                // Ensure ID, floor_id, and display-only fields are in the info array for the edit modal
                 $data['info']['id'] = $dbId;
                 $data['info']['floor_id'] = $floorId;
+                $data['info']['serial_number_display'] = cleanSerialNumberForDisplay($data['info']['serial_number'] ?? null);
                 ?>
-                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?> <?= $printerStatus === 'loading' ? 'loading-state' : '' ?>" data-id="<?= $dbId ?>" data-ip="<?= $ip ?>" data-floor-id="<?= $floorId ?? '' ?>">
+                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?> <?= $printerStatus === 'loading' ? 'loading-state' : '' ?>" data-id="<?= htmlspecialchars((string)$dbId, ENT_QUOTES, 'UTF-8') ?>" data-ip="<?= htmlspecialchars($ip, ENT_QUOTES, 'UTF-8') ?>" data-floor-id="<?= htmlspecialchars((string)($floorId ?? ''), ENT_QUOTES, 'UTF-8') ?>">
                     <div class="status-indicator <?= $printerStatus ?>"></div>
                     
 
@@ -409,12 +235,13 @@ header('Content-Type: text/html; charset=utf-8');
                     </div>
                     
                     <div class="info-item">
-                        <strong>Serial:</strong> <span class="printer-serial"><?= htmlspecialchars(cleanSerialNumber($data['info']['serial_number'] ?? null)) ?></span>
+                        <strong>Serial:</strong> <span class="printer-serial"><?= htmlspecialchars($data['info']['serial_number_display'] ?? 'N/A', ENT_QUOTES, 'UTF-8') ?></span>
                     </div>
 
-                    <div class="levels-section">
-                        <?= renderLevelsSectionHtml($printerStatus, $printerStatus === 'offline' ? (!empty($data['info']['last_levels']) ? json_decode($data['info']['last_levels'], true) : null) : ($data['levels'] ?? null)) ?>
-                    </div>
+                    <div class="levels-section"
+                         data-initial-status="<?= htmlspecialchars($printerStatus, ENT_QUOTES, 'UTF-8') ?>"
+                         data-initial-levels="<?= jsonForHtmlAttribute($initialLevels) ?>"
+                         data-initial-last-levels="<?= jsonForHtmlAttribute($initialLastLevels) ?>"></div>
 
                     <div class="cube-bottom">
                         <?php if (!empty($data['info']['description'])): ?>
@@ -431,7 +258,7 @@ header('Content-Type: text/html; charset=utf-8');
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                     </svg>
                                 </button>
-                                <button class="action-btn edit-btn" onclick="openEditModal(<?= htmlspecialchars(json_encode($data['info'])) ?>)" title="Edit Printer">
+                                <button class="action-btn edit-btn" onclick="openEditModal(<?= jsonForHtmlAttribute($data['info']) ?>)" title="Edit Printer">
                                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -598,6 +425,12 @@ header('Content-Type: text/html; charset=utf-8');
         </div>
     </div>
 
+    <script>
+        window.__SPRINTER_BOOTSTRAP__ = {
+            settings: <?= jsonForInlineScript($settings) ?>,
+            floors: <?= jsonForInlineScript($floors) ?>
+        };
+    </script>
     <script src="script.js"></script>
 </body>
 </html>
