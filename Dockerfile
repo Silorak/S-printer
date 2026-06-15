@@ -4,7 +4,6 @@ FROM php:8.2-apache
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libsnmp-dev \
-    curl \
     snmp && \
     docker-php-ext-install snmp pdo_mysql && \
     a2enmod rewrite headers && \

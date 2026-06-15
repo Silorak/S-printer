@@ -58,16 +58,18 @@ graph TD
 
 ```mermaid
 graph TD
-    A["🌐 HTTP GET /"] --> B["Įkelti DB įrašus<br/>spausdintuvai, aukštai, nustatymai"]
-    B --> C["Sugeneruoti kortelių karkasus<br/>+ lygių JSON data atributus"]
-    C --> D["Įterpti nustatymus / aukštus<br/>window.__SPRINTER_BOOTSTRAP__"]
-    D --> E["script.js užpildo<br/>pradinius lygių blokus"]
-    E --> F["refreshAllPrinters()<br/><i>lygiagretumo riba: 4</i>"]
-    F --> G["api.php?action=refresh_printer"]
-    G --> H["DB paieška pagal IP"]
-    H --> I["SNMP užklausa<br/><i>Žr. 1.2.1 toliau</i>"]
-    I --> J["Grąžinti JSON<br/>būsena + lygiai"]
-    J --> K["DOM rendereris atnaujina<br/>kortelės būseną ir lygius"]
+    A["🌐 HTTP GET /"] --> B["getPrinters()"]
+    B --> C["Duomenų bazė grąžina<br/>spausdintuvų įrašus<br/><i>IP, pavadinimas, aukštas</i>"]
+    C --> D{"CacheManager<br/>get('printers_data')"}
+
+    D -->|"Podėlio pataika"| E["Naudoti podėlyje<br/>esančius duomenis"]
+    D -->|"Podėlio nepataikyta"| F["Kiekvienam spausdintuvui:<br/>getPrinterData()"]
+
+    F --> G["SNMP užklausa<br/><i>Žr. 1.2.1 toliau</i>"]
+    G --> H["set('printers_data',<br/>data, TTL=5min)"]
+
+    E --> I["Generuoti HTML<br/>spausdintuvų korteles"]
+    H --> I
 ```
 
 #### 1.2.1 SNMP užklausos detalės (kiekvienam spausdintuvui)
@@ -701,18 +703,11 @@ sendError('Failed to add printer. The IP may already exist.');
 ### 6.6 Kliento pusės XSS prevencija
 
 ```javascript
-// Saugus DOM kūrimas dinaminiam turiniui
-function createTextMessage(className, text) {
-    const message = document.createElement('div');
-    message.className = className;
-    message.textContent = text; // textContent niekada neanalizuoja HTML
-    return message;
-}
-
-function renderLevelsSection(levelsSection, status, levels, lastLevels) {
-    const fragment = document.createDocumentFragment();
-    // lygių / pranešimų mazgai pridedami DOM API...
-    levelsSection.replaceChildren(fragment);
+// Saugus HTML ekranavimas dinaminiam turiniui
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;   // textContent niekada neanalizuoja HTML
+    return div.innerHTML;
 }
 ```
 

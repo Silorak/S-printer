@@ -166,10 +166,6 @@
     background: var(--yellow);
 }
 
-.other-fill {
-    background: var(--secondary);
-}
-
 /* Last seen levels styling */
 .last-seen-levels {
     margin-top: 1rem;
@@ -231,21 +227,6 @@
     border: 1px dashed rgba(127, 187, 179, 0.3);
 }
 
-/* Offline message */
-.offline-message {
-    background-color: rgba(224, 108, 117, 0.08);
-    border-radius: 4px;
-    padding: 0.65rem 0.75rem;
-    text-align: center;
-    color: #e06c75;
-    font-style: italic;
-    font-size: 0.85em;
-    border: 1px dashed rgba(224, 108, 117, 0.4);
-    margin: 1rem 0;
-    font-weight: 500;
-}
-
-
 /* ==================== BUTTONS ==================== */
 
 .buy-button {
@@ -268,7 +249,7 @@
 }
 
 .buy-button:active {
-    transform: translateY(0) scale(0.97);
+    transform: translateY(0);
 }
 
 /* Floating Action Button */
@@ -297,11 +278,6 @@
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
 }
 
-.fab:active {
-    transform: scale(0.95);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-}
-
 /* Theme Toggle */
 .theme-toggle {
     background: transparent;
@@ -319,10 +295,6 @@
     background: rgba(127, 187, 179, 0.2);
 }
 
-.theme-toggle:active {
-    transform: scale(0.93);
-}
-
 .theme-toggle svg {
     color: var(--primary);
     transition: transform 0.3s var(--ease);
@@ -332,7 +304,21 @@
     transform: rotate(20deg);
 }
 
+.theme-toggle-sun {
+    display: block;
+}
 
+.theme-toggle-moon {
+    display: none;
+}
+
+.light-theme .theme-toggle-sun {
+    display: none;
+}
+
+.light-theme .theme-toggle-moon {
+    display: block;
+}
 
 /* Settings Button */
 .settings-btn {
@@ -349,10 +335,6 @@
 
 .settings-btn:hover {
     background: rgba(127, 187, 179, 0.2);
-}
-
-.settings-btn:active {
-    transform: scale(0.93);
 }
 
 .settings-btn svg {
@@ -378,10 +360,6 @@
 .action-btn:hover {
     opacity: 1;
     transform: scale(1.1);
-}
-
-.action-btn:active {
-    transform: scale(0.9);
 }
 
 /* Loading Animation */
@@ -415,95 +393,4 @@ input:-webkit-autofill:active {
     -webkit-box-shadow: 0 0 0 30px #3d464b inset !important;
     -webkit-text-fill-color: #d3c6aa !important;
     transition: background-color 5000s ease-in-out 0s;
-}
-
-/* ==================== REFRESHING/LOADING ANIMATIONS ==================== */
-
-@keyframes pulse {
-    0%, 100% {
-        opacity: 0.55;
-    }
-    50% {
-        opacity: 1;
-    }
-}
-
-.cube.refreshing,
-.cube.loading-state {
-    border: 1px solid var(--primary);
-    box-shadow: 0 4px 12px rgba(127, 187, 179, 0.15);
-}
-
-.cube.refreshing .status-indicator,
-.cube.loading-state .status-indicator,
-.status-indicator.loading {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background-color: transparent !important;
-    border: 2px solid rgba(127, 187, 179, 0.2) !important;
-    border-top-color: var(--primary) !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    animation: spin 1s linear infinite !important;
-}
-
-.cube.refreshing .level-fill,
-.cube.loading-state .level-fill {
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-.cube.refreshing .level-bar.faded,
-.cube.loading-state .level-bar.faded {
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-.pulse-loading {
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-/* Card Loading / Refreshing Badge styling */
-.cube.loading-state::after,
-.cube.refreshing::after {
-    position: absolute;
-    top: 0.8rem;
-    right: 2.2rem;
-    font-size: 0.65rem;
-    font-weight: 600;
-    padding: 0.15rem 0.45rem;
-    border-radius: 4px;
-    background-color: rgba(127, 187, 179, 0.1);
-    color: var(--primary);
-    border: 1px solid rgba(127, 187, 179, 0.25);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    animation: badgePulse 1.5s ease-in-out infinite;
-    pointer-events: none;
-    z-index: 10;
-}
-
-.cube.loading-state::after {
-    content: "Loading...";
-}
-
-.cube.refreshing::after {
-    content: "Refreshing...";
-}
-
-.light-theme .cube.loading-state::after,
-.light-theme .cube.refreshing::after {
-    background-color: rgba(141, 161, 1, 0.06);
-    border-color: rgba(141, 161, 1, 0.2);
-    color: var(--primary);
-}
-
-@keyframes badgePulse {
-    0%, 100% {
-        opacity: 0.6;
-        transform: scale(0.95);
-    }
-    50% {
-        opacity: 1;
-        transform: scale(1);
-    }
 }

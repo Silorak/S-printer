@@ -71,7 +71,8 @@ body {
     background: var(--bg);
     color: var(--fg);
     margin: 0;
-    padding: 0;
+    padding: 20px;
+    padding-top: 0;
     font-family: system-ui, -apple-system, sans-serif;
     margin-top: 0 !important;
     min-height: 100vh;
@@ -80,7 +81,7 @@ body {
 
 h1 {
     text-align: center;
-    margin: 1.5rem 0;
+    margin: 3rem 0rem 2rem 0rem;
     font-size: 2.5rem;
     color: var(--primary);
 }
@@ -147,27 +148,4 @@ h1 {
 .light-theme input:-webkit-autofill:focus {
     -webkit-box-shadow: 0 0 0 30px #f1efe3 inset !important;
     -webkit-text-fill-color: #5c6a72 !important;
-}
-
-/* Premium Keyboard Focus Rings for Accessibility */
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
-.floor-item:focus-visible,
-.settings-nav-item:focus-visible {
-    outline: 2px solid var(--primary) !important;
-    outline-offset: 3px !important;
-    box-shadow: 0 0 0 4px rgba(127, 187, 179, 0.25) !important;
-}
-
-.light-theme button:focus-visible,
-.light-theme a:focus-visible,
-.light-theme input:focus-visible,
-.light-theme select:focus-visible,
-.light-theme textarea:focus-visible,
-.light-theme .floor-item:focus-visible,
-.light-theme .settings-nav-item:focus-visible {
-    box-shadow: 0 0 0 4px rgba(141, 161, 1, 0.25) !important;
 }
