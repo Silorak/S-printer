@@ -4,8 +4,8 @@ declare(strict_types=1);
 // Settings
 $config = [
     'snmp_community' => getenv('SNMP_COMMUNITY') ?: 'public',
-    'snmp_timeout' => 500000, // 0.5 seconds
-    'snmp_retries' => 2,
+    'snmp_timeout' => 200000, // 0.2 seconds (optimized for local network latency)
+    'snmp_retries' => 1,
     'cache_enabled' => true,
     'cache_ttl' => 300, // 5 minutes
 ];
@@ -14,6 +14,10 @@ $config = [
 require_once 'PrinterDiscovery.php';
 require_once 'CacheManager.php';
 require_once 'Database.php';
+require_once 'Formatting.php';
+require_once 'Auth.php';
+
+sprinterStartSecureSession();
 
 // Security headers
 header("X-Content-Type-Options: nosniff");
@@ -31,52 +35,83 @@ $discovery = new PrinterDiscovery(
     $config['snmp_retries']
 );
 
-// Check if we should clear cache (from request parameter)
-if (isset($_GET['refresh']) && $_GET['refresh'] === '1') {
+$dbError = $db->getLastError();
+$currentUser = null;
+$currentPermissions = sprinterPermissionDefaults(false);
+$usersForManagement = [];
+$canAddPrinter = false;
+$canEditPrinter = false;
+$canDeletePrinter = false;
+$canManageFloors = false;
+$canManageSettings = false;
+$canImportExport = false;
+$canManageUsers = false;
+$canOpenSettings = false;
+$defaultSettingsTab = 'display';
+
+if (empty($dbError)) {
+    sprinterHandleAuthPost($db);
+    $authError = sprinterTakeAuthError();
+
+    if (!$db->hasUsers()) {
+        sprinterRenderAuthPage('register', $authError);
+    }
+
+    $currentUser = sprinterGetCurrentUser($db);
+    if (!$currentUser) {
+        sprinterRenderAuthPage('login', $authError);
+    }
+
+    $currentPermissions = sprinterPermissionsFromUser($currentUser);
+    $canAddPrinter = !empty($currentPermissions['can_add_printer']);
+    $canEditPrinter = !empty($currentPermissions['can_edit_printer']);
+    $canDeletePrinter = !empty($currentPermissions['can_delete_printer']);
+    $canManageFloors = !empty($currentPermissions['can_manage_floors']);
+    $canManageSettings = !empty($currentPermissions['can_manage_settings']);
+    $canImportExport = !empty($currentPermissions['can_import_export']);
+    $canManageUsers = !empty($currentPermissions['can_manage_users']);
+    $canOpenSettings = $canManageFloors || $canManageSettings || $canManageUsers;
+    $defaultSettingsTab = $canManageFloors ? 'floors' : ($canManageSettings ? 'display' : 'users');
+    $usersForManagement = $canManageUsers ? $db->getUsers() : [];
+}
+
+// Check if we should clear cache (retained for compatibility, but we bypass sequential walks)
+if ($currentUser && isset($_GET['refresh']) && $_GET['refresh'] === '1') {
     $cacheManager->clear();
 }
 
 // Get printers from DB
-$dbPrinters = $db->getPrinters();
-$dbError = $db->getLastError();
+$dbPrinters = $currentUser ? $db->getPrinters() : [];
 
 // Get floors and settings
-$floors = $db->getFloors();
-$settings = $db->getSettings();
+$floors = $currentUser ? $db->getFloors() : [];
+$settings = $currentUser ? $db->getSettings() : [];
 
 $printers = [];
 
-// Process printers (with caching)
-$cacheKey = 'printers_data';
-if ($config['cache_enabled']) {
-    $cachedData = $cacheManager->get($cacheKey);
-    if (!empty($cachedData)) {
-        // If cached data exists, use it
-        // We need to merge cached data with DB data to ensure we have the latest DB changes
-        // But we want to keep the cached SNMP levels/status
-        $printers = $cachedData;
-        
-        // Check if DB has changed (simple check: count)
-        // In a real app, we'd use timestamps or more complex logic
-        if (count($dbPrinters) !== count($printers)) {
-            $printers = []; // Force refresh if counts differ
-        }
-    }
-}
-
-// If no printers are loaded (either no cache or cache invalidated) and no DB error
-if (empty($printers) && empty($dbError)) {
-    // Loop through each saved printer to get its live status
+if (empty($dbError)) {
     foreach ($dbPrinters as $dbPrinter) {
-        // Get live data (ink levels, online/offline) using SNMP
-        // This combines the database info (name, IP) with live info
-        $data = $discovery->getPrinterData($dbPrinter);
-        $printers[$dbPrinter['ip']] = $data; // Store printer data indexed by IP
-    }
-    
-    // Cache the results if caching is enabled and we have data
-    if ($config['cache_enabled'] && !empty($printers)) {
-        $cacheManager->set($cacheKey, $printers);
+        $ip = $dbPrinter['ip'];
+        $lastLevels = !empty($dbPrinter['last_levels']) ? json_decode($dbPrinter['last_levels'], true) : null;
+        
+        // Initial state is "loading" (it will be refreshed via JS asynchronously)
+        $printers[$ip] = [
+            'info' => [
+                'id' => $dbPrinter['id'],
+                'ip' => $ip,
+                'last_updated' => time(),
+                'full_name' => $dbPrinter['name'] ?: ($dbPrinter['model'] ?: 'Unknown Printer'),
+                'description' => $dbPrinter['description'],
+                'purchase_url' => $dbPrinter['purchase_url'],
+                'serial_number' => $dbPrinter['serial'],
+                'serial_number_display' => cleanSerialNumberForDisplay($dbPrinter['serial'] ?? null),
+                'model' => $dbPrinter['model'],
+                'last_levels' => $dbPrinter['last_levels'],
+                'floor_id' => $dbPrinter['floor_id'],
+                'status' => 'loading' // Loading state initially
+            ],
+            'levels' => $lastLevels ?: []
+        ];
     }
 }
 
@@ -114,15 +149,25 @@ header('Content-Type: text/html; charset=utf-8');
             </div>
         </div>
         <div class="search-container">
-            <input type="text" id="printerSearch" placeholder="⌛ Write here to search...">
+            <input type="text" id="printerSearch" placeholder="🔍 Search printers...">
         </div>
         <div class="header-controls">
+            <?php if ($currentUser): ?>
+                <div class="user-chip" title="Signed in user">👤 <?= htmlspecialchars((string)$currentUser['username'], ENT_QUOTES, 'UTF-8') ?></div>
+                <form id="logoutForm" method="post" class="logout-form">
+                    <input type="hidden" name="auth_action" value="logout">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(sprinterCsrfToken(), ENT_QUOTES, 'UTF-8') ?>">
+                    <button type="submit" class="secondary-btn compact-btn">Logout</button>
+                </form>
+            <?php endif; ?>
+            <?php if ($canOpenSettings): ?>
             <button id="settingsBtn" class="settings-btn" title="Settings" aria-label="Open settings">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
                     <circle cx="12" cy="12" r="3"/>
                 </svg>
             </button>
+            <?php endif; ?>
             <div class="theme-toggle-container">
                 <button id="themeToggle" class="theme-toggle" aria-label="Toggle dark/light theme">
                     <div class="theme-toggle-knob"></div>
@@ -164,7 +209,6 @@ header('Content-Type: text/html; charset=utf-8');
                 <strong>⚠️</strong>
                 <?= htmlspecialchars($dbError) ?>
             </div>
-            <style>body { margin-top: 60px; }</style>
         <?php endif; ?>
     <?php endif; ?>
 
@@ -181,8 +225,8 @@ header('Content-Type: text/html; charset=utf-8');
             </div>
         <?php else: ?>
             <div class="refresh-panel">
-                <a href="?refresh=1" class="refresh-button">Refresh Printer Data</a>
-                <div class="last-refresh">Last updated: <?= date('Y-m-d H:i:s') ?></div>
+                <button id="refreshDataBtn" class="refresh-button">Refresh Printer Data</button>
+                <div class="last-refresh">Last updated: <span id="lastRefreshTime"><?= date('Y-m-d H:i:s') ?></span></div>
             </div>
             
             <div class="content-with-sidebar">
@@ -220,12 +264,21 @@ header('Content-Type: text/html; charset=utf-8');
                 
                 // Check printer status - will be 'online' or 'offline'
                 $printerStatus = $data['info']['status'] ?? 'online';
+                $initialLevels = $data['levels'] ?? [];
+                if (!is_array($initialLevels)) {
+                    $initialLevels = [];
+                }
+                $initialLastLevels = !empty($data['info']['last_levels']) ? json_decode((string)$data['info']['last_levels'], true) : null;
+                if (!is_array($initialLastLevels)) {
+                    $initialLastLevels = null;
+                }
                 
-                // Ensure ID and floor_id are in the info array for the edit modal
+                // Ensure ID, floor_id, and display-only fields are in the info array for the edit modal
                 $data['info']['id'] = $dbId;
                 $data['info']['floor_id'] = $floorId;
+                $data['info']['serial_number_display'] = cleanSerialNumberForDisplay($data['info']['serial_number'] ?? null);
                 ?>
-                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?>" data-id="<?= $dbId ?>" data-ip="<?= $ip ?>" data-floor-id="<?= $floorId ?? '' ?>">
+                <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?> <?= $printerStatus === 'loading' ? 'loading-state' : '' ?>" data-id="<?= htmlspecialchars((string)$dbId, ENT_QUOTES, 'UTF-8') ?>" data-ip="<?= htmlspecialchars($ip, ENT_QUOTES, 'UTF-8') ?>" data-floor-id="<?= htmlspecialchars((string)($floorId ?? ''), ENT_QUOTES, 'UTF-8') ?>">
                     <div class="status-indicator <?= $printerStatus ?>"></div>
                     
 
@@ -234,88 +287,13 @@ header('Content-Type: text/html; charset=utf-8');
                     </div>
                     
                     <div class="info-item">
-                        <strong>Serial:</strong> <?= htmlspecialchars($data['info']['serial_number'] ?? 'N/A') ?>
+                        <strong>Serial:</strong> <span class="printer-serial"><?= htmlspecialchars($data['info']['serial_number_display'] ?? 'N/A', ENT_QUOTES, 'UTF-8') ?></span>
                     </div>
 
-                    <?php if ($printerStatus === 'offline'): ?>
-                        <div class="offline-message">
-                            Printer is currently offline
-                        </div>
-                        <?php 
-                        // Check if we have last known levels in the database
-                        $lastLevels = !empty($data['info']['last_levels']) ? json_decode($data['info']['last_levels'], true) : null;
-                        
-                        if ($lastLevels && is_array($lastLevels)): 
-                        ?>
-                            <div class="last-seen-levels">
-                                <small>Last known levels:</small>
-                                <?php foreach ($lastLevels as $color => $level): ?>
-                                    <div class="level-bar faded">
-                                        <div class="level-label">
-                                            <span><?= ucfirst($color) ?></span>
-                                            <span><?= $level['percentage'] ?>%</span>
-                                        </div>
-                                        <div class="level-container">
-                                            <div class="level-fill <?= $color ?>-fill" 
-                                                 style="width: <?= $level['percentage'] ?>%"
-                                                 data-level="<?= $level['percentage'] ?>">
-                                            </div>
-                                        </div>
-                                    </div>
-                                <?php endforeach; ?>
-                            </div>
-                        <?php endif; ?>
-                    <?php else: ?>
-                        <?php 
-                        // Check if levels exist AND have actual data
-                        // "No ink/toner level data available" = OIDs missing/unsupported model
-                        // 0% levels = Printer IS reporting, show "Not Genuine / Empty Cartridge"
-                        $hasLevels = isset($data['levels']) && is_array($data['levels']) && count($data['levels']) > 0;
-                        if ($hasLevels): 
-                            // Save these levels to the database for future offline use
-                            if ($dbId > 0) {
-                                $db->updatePrinterLevels($dbId, $data['levels']);
-                            }
-                        ?>
-                            <?php foreach ($data['levels'] as $color => $level): ?>
-                                <?php 
-                                // Determine display text based on status
-                                $displayPercentage = $level['percentage'] . '%';
-                                $barWidth = max(0, $level['percentage']);
-                                $specialClass = '';
-                                
-                                // Handle special statuses
-                                if (isset($level['status']) && $level['status'] === 'empty_or_not_genuine') {
-                                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                                    $barWidth = 0;
-                                    $specialClass = 'warning-level';
-                                } elseif ($level['percentage'] <= 0) {
-                                    // No status set but percentage is 0 or less
-                                    $displayPercentage = 'Not Genuine / Empty Cartridge';
-                                    $barWidth = 0;
-                                    $specialClass = 'warning-level';
-                                }
-                                ?>
-                                <div class="level-bar <?= $specialClass ?>">
-                                    <div class="level-label">
-                                        <span><?= ucfirst($color) ?></span>
-                                        <span><?= $displayPercentage ?></span>
-                                    </div>
-                                    <div class="level-container">
-                                        <div class="level-fill <?= $color ?>-fill" 
-                                             style="width: <?= $barWidth ?>%"
-                                             data-level="<?= $barWidth ?>"
-                                             aria-label="<?= $level['current'] ?>/<?= $level['max'] ?>">
-                                        </div>
-                                    </div>
-                                </div>
-                            <?php endforeach; ?>
-                        <?php else: ?>
-                            <div class="no-data-message">
-                                No ink/toner level data available
-                            </div>
-                        <?php endif; ?>
-                    <?php endif; ?>
+                    <div class="levels-section"
+                         data-initial-status="<?= htmlspecialchars($printerStatus, ENT_QUOTES, 'UTF-8') ?>"
+                         data-initial-levels="<?= jsonForHtmlAttribute($initialLevels) ?>"
+                         data-initial-last-levels="<?= jsonForHtmlAttribute($initialLastLevels) ?>"></div>
 
                     <div class="cube-bottom">
                         <?php if (!empty($data['info']['description'])): ?>
@@ -325,20 +303,26 @@ header('Content-Type: text/html; charset=utf-8');
                         <?php endif; ?>
                         
                         <div class="cube-footer">
+                            <?php if ($canDeletePrinter || $canEditPrinter): ?>
                             <div class="actions-menu">
+                                <?php if ($canDeletePrinter): ?>
                                 <button class="action-btn delete-btn" onclick="deletePrinter(<?= $dbId ?>)" title="Remove Printer">
                                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                                     </svg>
                                 </button>
-                                <button class="action-btn edit-btn" onclick="openEditModal(<?= htmlspecialchars(json_encode($data['info'])) ?>)" title="Edit Printer">
+                                <?php endif; ?>
+                                <?php if ($canEditPrinter): ?>
+                                <button class="action-btn edit-btn" onclick="openEditModal(<?= jsonForHtmlAttribute($data['info']) ?>)" title="Edit Printer">
                                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                                     </svg>
                                 </button>
+                                <?php endif; ?>
                             </div>
+                            <?php endif; ?>
 
                             <?php if (!empty($data['info']['purchase_url'])): ?>
                                 <a href="<?= htmlspecialchars($data['info']['purchase_url'], ENT_QUOTES, 'UTF-8') ?>" class="buy-button" target="_blank" rel="noopener noreferrer">
@@ -360,7 +344,9 @@ header('Content-Type: text/html; charset=utf-8');
     </div><!-- /.main-layout -->
 
     <!-- Floating Action Button -->
+    <?php if ($canAddPrinter): ?>
     <button id="addPrinterBtn" class="fab" title="Add Printer">+</button>
+    <?php endif; ?>
 
     <!-- Modal -->
     <div id="printerModal" class="modal">
@@ -411,17 +397,22 @@ header('Content-Type: text/html; charset=utf-8');
 
                 <div class="form-actions">
                     <div class="left-actions">
+                        <?php if ($canImportExport): ?>
                         <button type="button" id="exportBtn" class="secondary-btn" title="Export to JSON">Export</button>
                         <button type="button" id="importBtn" class="secondary-btn" title="Import from JSON">Import</button>
                         <input type="file" id="importFile" accept=".json" style="display: none;">
+                        <?php endif; ?>
                     </div>
+                    <?php if ($canAddPrinter || $canEditPrinter): ?>
                     <button type="submit" class="primary-btn">Save Printer</button>
+                    <?php endif; ?>
                 </div>
             </form>
         </div>
     </div>
 
     <!-- Settings Modal -->
+    <?php if ($canOpenSettings): ?>
     <div id="settingsModal" class="modal">
         <div class="modal-content settings-modal-content">
             <span class="close-modal" id="closeSettingsModal">&times;</span>
@@ -430,18 +421,28 @@ header('Content-Type: text/html; charset=utf-8');
             <div class="settings-layout">
                 <!-- Sidebar navigation -->
                 <nav class="settings-nav">
-                    <button class="settings-nav-item active" data-tab="floors">
+                    <?php if ($canManageFloors): ?>
+                    <button class="settings-nav-item <?= $defaultSettingsTab === 'floors' ? 'active' : '' ?>" data-tab="floors">
                         🏢 Manage Floors
                     </button>
-                    <button class="settings-nav-item" data-tab="display">
+                    <?php endif; ?>
+                    <?php if ($canManageSettings): ?>
+                    <button class="settings-nav-item <?= $defaultSettingsTab === 'display' ? 'active' : '' ?>" data-tab="display">
                         🖥️ Display Settings
                     </button>
+                    <?php endif; ?>
+                    <?php if ($canManageUsers): ?>
+                    <button class="settings-nav-item <?= $defaultSettingsTab === 'users' ? 'active' : '' ?>" data-tab="users">
+                        👥 Users
+                    </button>
+                    <?php endif; ?>
                 </nav>
 
                 <!-- Tab content -->
                 <div class="settings-content">
+                    <?php if ($canManageFloors): ?>
                     <!-- Manage Floors Tab -->
-                    <div class="settings-tab active" id="floorsTab">
+                    <div class="settings-tab <?= $defaultSettingsTab === 'floors' ? 'active' : '' ?>" id="floorsTab">
                         <h3>Manage Floors</h3>
                         <p class="settings-hint">Add floors to organize your printers by location.</p>
                         
@@ -470,9 +471,11 @@ header('Content-Type: text/html; charset=utf-8');
                             </div>
                         </div>
                     </div>
+                    <?php endif; ?>
 
+                    <?php if ($canManageSettings): ?>
                     <!-- Display Settings Tab -->
-                    <div class="settings-tab" id="displayTab">
+                    <div class="settings-tab <?= $defaultSettingsTab === 'display' ? 'active' : '' ?>" id="displayTab">
                         <h3>Display Settings</h3>
                         <p class="settings-hint">Customize what information is shown on printer cards.</p>
                         
@@ -494,11 +497,96 @@ header('Content-Type: text/html; charset=utf-8');
                             <button type="button" id="saveSettingsBtn" class="primary-btn">Save Settings</button>
                         </div>
                     </div>
+                    <?php endif; ?>
+
+                    <?php if ($canManageUsers): ?>
+                    <!-- Users Tab -->
+                    <div class="settings-tab <?= $defaultSettingsTab === 'users' ? 'active' : '' ?>" id="usersTab">
+                        <h3>User Management</h3>
+                        <p class="settings-hint">Create local view-only users and toggle only the permissions they need.</p>
+
+                        <form id="userCreateForm" class="user-create-form">
+                            <div class="user-create-grid">
+                                <div class="form-group">
+                                    <label for="newUsername">Username</label>
+                                    <input type="text" id="newUsername" name="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9_.-]{3,64}" placeholder="viewer">
+                                </div>
+                                <div class="form-group">
+                                    <label for="newUserPassword">Password</label>
+                                    <input type="password" id="newUserPassword" name="password" required minlength="15" maxlength="1024" placeholder="15+ character passphrase">
+                                </div>
+                            </div>
+                            <div class="permission-grid" aria-label="New user permissions">
+                                <?php foreach (SPRINTER_PERMISSIONS as $permissionKey => $permissionLabel): ?>
+                                    <?php if ($permissionKey === 'can_manage_users') continue; ?>
+                                    <label class="permission-toggle">
+                                        <input type="checkbox" data-permission="<?= htmlspecialchars($permissionKey, ENT_QUOTES, 'UTF-8') ?>">
+                                        <span><?= htmlspecialchars($permissionLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                                    </label>
+                                <?php endforeach; ?>
+                            </div>
+                            <button type="submit" class="primary-btn">Create User</button>
+                        </form>
+
+                        <div id="userList" class="user-management">
+                            <?php foreach ($usersForManagement as $managedUser): ?>
+                                <?php $managedPerms = sprinterPermissionsFromUser($managedUser); ?>
+                                <section class="user-row" data-user-id="<?= htmlspecialchars((string)$managedUser['id'], ENT_QUOTES, 'UTF-8') ?>">
+                                    <div class="user-row-header">
+                                        <strong><?= htmlspecialchars((string)$managedUser['username'], ENT_QUOTES, 'UTF-8') ?></strong>
+                                        <?php if (!empty($managedUser['is_admin'])): ?>
+                                            <span class="user-badge">Main admin</span>
+                                        <?php elseif (empty($managedUser['is_active'])): ?>
+                                            <span class="user-badge inactive">Disabled</span>
+                                        <?php endif; ?>
+                                    </div>
+
+                                    <?php if (!empty($managedUser['is_admin'])): ?>
+                                        <p class="settings-hint">The main admin always has every permission and cannot be modified here.</p>
+                                    <?php else: ?>
+                                        <label class="permission-toggle active-toggle">
+                                            <input type="checkbox" data-field="is_active" <?= !empty($managedUser['is_active']) ? 'checked' : '' ?>>
+                                            <span>Active account</span>
+                                        </label>
+                                        <div class="permission-grid">
+                                            <?php foreach (SPRINTER_PERMISSIONS as $permissionKey => $permissionLabel): ?>
+                                                <?php if ($permissionKey === 'can_manage_users') continue; ?>
+                                                <label class="permission-toggle">
+                                                    <input type="checkbox" data-permission="<?= htmlspecialchars($permissionKey, ENT_QUOTES, 'UTF-8') ?>" <?= !empty($managedPerms[$permissionKey]) ? 'checked' : '' ?>>
+                                                    <span><?= htmlspecialchars($permissionLabel, ENT_QUOTES, 'UTF-8') ?></span>
+                                                </label>
+                                            <?php endforeach; ?>
+                                        </div>
+                                        <div class="user-row-actions">
+                                            <input type="password" class="user-password-input" placeholder="New password (optional)" minlength="15" maxlength="1024">
+                                            <button type="button" class="save-user-btn secondary-btn">Save User</button>
+                                        </div>
+                                    <?php endif; ?>
+                                </section>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
     </div>
+    <?php endif; ?>
 
+    <script>
+        window.__SPRINTER_BOOTSTRAP__ = {
+            settings: <?= jsonForInlineScript($settings) ?>,
+            floors: <?= jsonForInlineScript($floors) ?>,
+            csrfToken: <?= jsonForInlineScript(sprinterCsrfToken()) ?>,
+            currentUser: <?= jsonForInlineScript($currentUser ? sprinterPublicUser($currentUser) : null) ?>,
+            currentPermissions: <?= jsonForInlineScript($currentPermissions) ?>,
+            auth: {
+                csrfToken: <?= jsonForInlineScript(sprinterCsrfToken()) ?>,
+                currentUser: <?= jsonForInlineScript($currentUser ? sprinterPublicUser($currentUser) : null) ?>,
+                permissions: <?= jsonForInlineScript($currentPermissions) ?>
+            }
+        };
+    </script>
     <script src="script.js"></script>
 </body>
 </html>

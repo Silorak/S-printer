@@ -44,6 +44,7 @@ A deeper tree would add maintenance overhead right now. Add child `AGENTS.md` fi
 | `docs/*` | root `AGENTS.md` | Analysis and operational docs until docs become a larger subsystem. |
 | `tools/verify-phase1.mjs` | root `AGENTS.md` | Static verification for Phase 1 security/correctness contracts. |
 | `tools/verify-phase2.mjs` | root `AGENTS.md` | Static verification for Phase 2 renderer/DOM-safety contracts. |
+| `tools/verify-phase3.mjs` | root `AGENTS.md` | Static verification for Phase 3 performance/cache/cancellation contracts. |
 | `src/index.php` | `src/AGENTS.md` | Dashboard render, headers, modals, DOM contracts. |
 | `src/api.php` | `src/AGENTS.md` | JSON API action router and response envelope. |
 | `src/Database.php` | `src/AGENTS.md` | DB connection, schema/migrations, CRUD, settings, import/export helpers. |
@@ -92,9 +93,10 @@ After editing:
 - Runtime source is bind-mounted from `./src` to `/var/www/html` in local Compose.
 - There is no Composer/npm build pipeline and no automated test suite observed.
 - The target folder is not currently a Git repository.
-- `architecture.md` / `architektura.md` request lifecycles describe the current DB-backed card shell plus async per-printer refresh flow; their cache strategy sections should be revisited during Phase 3 cache work.
+- `architecture.md` / `architektura.md` request lifecycles and cache strategy sections describe the current DB-backed card shell plus async per-printer refresh flow.
 - `api.php` and `index.php` now both read `SNMP_COMMUNITY` before constructing `PrinterDiscovery`; keep these paths aligned.
 - Level rendering is JS-owned; PHP emits card shells plus level JSON data attributes.
+- `refresh_printer` uses a short per-printer cache and unchanged-level DB write skip; mutations clear runtime caches.
 - CSS load order is behaviorally important because later files intentionally override earlier rules.
 
 ## When to add future child AGENTS files

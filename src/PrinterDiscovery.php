@@ -22,7 +22,7 @@ class PrinterDiscovery {
      * 
      * Sets up the SNMP settings.
      */
-    public function __construct(string $community = 'public', int $timeout = 500000, int $retries = 2) {
+    public function __construct(string $community = 'public', int $timeout = 200000, int $retries = 1) {
         $this->community = $community;
         $this->timeout = $timeout;
         $this->retries = $retries;
@@ -164,7 +164,13 @@ class PrinterDiscovery {
             foreach ($oids as $oid) {
                 $value = @snmp2_get($ip, $this->community, $oid, $this->timeout, $this->retries);
                 if ($value !== false) {
-                    $info[$key] = $this->sanitizeSnmpValue($value);
+                    $cleanedVal = $this->sanitizeSnmpValue($value);
+                    if ($key === 'full_name' || $key === 'model') {
+                        // Strip out firmware info e.g. " /5.114..." or " /CXIGY..."
+                        $cleanedVal = preg_replace('/\s*\/[0-9a-zA-Z\.\-_]{2,}.*$/i', '', $cleanedVal);
+                        $cleanedVal = trim($cleanedVal);
+                    }
+                    $info[$key] = $cleanedVal;
                     break; // Found it! Stop looking for this item.
                 }
             }
@@ -220,11 +226,43 @@ class PrinterDiscovery {
                 
                 $max = (float)$supply['max'];
                 $current = (float)$supply['current'];
+                $color = $this->determineColor($supply['description']);
+                if ($color === 'other') continue; // Hide other levels like drum units
+                
+                // Handle state-based toner reporting (RFC 3805 / Brother)
+                if ($current == -3) {
+                    // Level is OK / not low, map to 100% with status 'ok'
+                    $levels[$color] = [
+                        'percentage' => 100,
+                        'current' => 100,
+                        'max' => 100,
+                        'color' => $color,
+                        'description' => $supply['description'],
+                        'status' => 'ok'
+                    ];
+                    continue;
+                }
+                
+                if ($current == -2) {
+                    continue; // Skip if status is completely unknown
+                }
                 
                 if ($max <= 0) continue;
                 
                 $percentage = round(($current / $max) * 100, 2);
-                $color = $this->determineColor($supply['description']);
+                
+                // Check for 0% or negative values (empty or not genuine)
+                if ($percentage <= 0) {
+                    $levels[$color] = [
+                        'percentage' => 0,
+                        'current' => $current,
+                        'max' => $max,
+                        'color' => $color,
+                        'description' => $supply['description'],
+                        'status' => 'empty_or_not_genuine'
+                    ];
+                    continue;
+                }
                 
                 $levels[$color] = [
                     'percentage' => $percentage,
@@ -256,88 +294,45 @@ class PrinterDiscovery {
             $vendorName = $this->detectVendor($this->sanitizeSnmpValue($sysDescr));
         }
         
+        // Standard 4-color OID mapping (used by most vendors)
+        $standardMap = [
+            'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
+            'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
+            'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
+            'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
+        ];
+ 
         // Map of OIDs for different brands
         $oidMappings = [
-            'HP' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
+            'HP' => $standardMap,
             'TOSHIBA' => [
                 'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
                 'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
                 'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.6', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.6',
                 'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.9', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.9'
             ],
-            'CANON' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'EPSON' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4',
+            'CANON' => $standardMap,
+            'EPSON' => array_merge($standardMap, [
                 'max_light_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.5', 'light_cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.5',
                 'max_light_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.6', 'light_magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.6'
-            ],
+            ]),
             // Brother laser printers use standard MIB, inkjets are handled separately below
-            'BROTHER' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
+            'BROTHER' => $standardMap,
+            'RICOH' => $standardMap,
+            'LEXMARK' => $standardMap,
+            'KYOCERA' => $standardMap,
+            'KONICA' => $standardMap,
+            'XEROX' => $standardMap,
+            'SAMSUNG' => $standardMap,
+            'PANTUM' => [
+                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1'
             ],
-            'RICOH' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'LEXMARK' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'KYOCERA' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'KONICA' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'XEROX' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'SAMSUNG' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ],
-            'GENERIC' => [
-                'max_black' => '.1.3.6.1.2.1.43.11.1.1.8.1.1', 'black' => '.1.3.6.1.2.1.43.11.1.1.9.1.1',
-                'max_cyan' => '.1.3.6.1.2.1.43.11.1.1.8.1.2', 'cyan' => '.1.3.6.1.2.1.43.11.1.1.9.1.2',
-                'max_magenta' => '.1.3.6.1.2.1.43.11.1.1.8.1.3', 'magenta' => '.1.3.6.1.2.1.43.11.1.1.9.1.3',
-                'max_yellow' => '.1.3.6.1.2.1.43.11.1.1.8.1.4', 'yellow' => '.1.3.6.1.2.1.43.11.1.1.9.1.4'
-            ]
+            'GENERIC' => $standardMap
         ];
         
         // Use Generic if unknown
         $oids = $oidMappings[$vendorName] ?? $oidMappings['GENERIC'];
-
+ 
         // Special case for TOSHIBA e-STUDIO409S (Monochrome)
         // The generic Toshiba map includes color OIDs which map to Imaging Units on this model.
         if ($vendorName === 'TOSHIBA' && isset($sysDescr) && stripos($sysDescr, 'e-STUDIO409S') !== false) {
@@ -346,17 +341,15 @@ class PrinterDiscovery {
             ];
         }
         
-        // Special case for Brother inkjet printers (MFC-J series, DCP-J series, etc.)
-        // These use a proprietary OID that returns hex-encoded ink levels
+        // Special case for Brother printers (inkjet and laser models alike)
+        // These use a proprietary OID (brInfoMaintenance) that returns hex-encoded consumable data
         if ($vendorName === 'BROTHER' && isset($sysDescr)) {
-            $sysDescrClean = $this->sanitizeSnmpValue($sysDescr);
-            // Check if it's an inkjet model (models containing -J typically are inkjets)
-            if (preg_match('/MFC-J|DCP-J|MFC-INK|DCP-INK/i', $sysDescrClean)) {
-                $brotherLevels = $this->getBrotherInkjetLevels($ip);
-                if (!empty($brotherLevels)) {
-                    return $brotherLevels;
-                }
+            $brotherLevels = $this->getBrotherConsumableLevels($ip);
+            if (!empty($brotherLevels)) {
+                return $brotherLevels;
             }
+            // If the proprietary check failed/returned nothing, fall back to standard MIB walk
+            return [];
         }
         $data = [];
         
@@ -374,11 +367,24 @@ class PrinterDiscovery {
                 $max = $data["max_{$color}"];
                 $current = $data[$color];
                 
+                // Handle state-based toner reporting (RFC 3805 / Brother)
+                if ($current == -3) {
+                    $levels[$color] = [
+                        'percentage' => 100,
+                        'current' => 100,
+                        'max' => 100,
+                        'color' => $color,
+                        'description' => ucfirst($color) . ' supply',
+                        'status' => 'ok'
+                    ];
+                    continue;
+                }
+                
                 // Handle special SNMP return codes:
-                // -3 = Supply is not low (no exact level available - skip)
+                // -3 = Supply is not low (handled above)
                 // -2 = Unknown status (skip)
                 // 0 or less = Empty or not genuine cartridge
-                if ($current == -3 || $current == -2) {
+                if ($current == -2) {
                     // Printer doesn't report exact levels for this cartridge - skip it
                     continue;
                 }
@@ -419,11 +425,55 @@ class PrinterDiscovery {
      * Cleans up the raw text returned by the printer (removes "STRING:", quotes, etc.)
      */
     private function sanitizeSnmpValue(string $value): string {
+        // Handle Hex-STRING values: convert hex bytes to ASCII or numeric integer
+        // e.g., "Hex-STRING: 48 50" → "HP", "Hex-STRING: 00 00 00 64" → "100", "Hex-STRING: 00 00 00 00" → "0"
+        if (preg_match('/^Hex-STRING:\s*/i', $value)) {
+            $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $value));
+            $hexBytes = str_replace(' ', '', $hexPart);
+            
+            // First check if it represents a clean printable ASCII string
+            $ascii = '';
+            $isPrintable = true;
+            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+                $byte = hexdec(substr($hexBytes, $i, 2));
+                if ($byte < 32 || $byte > 126) {
+                    $isPrintable = false;
+                }
+                $ascii .= chr($byte);
+            }
+            
+            if ($isPrintable && strlen($hexBytes) > 0) {
+                return trim($ascii);
+            }
+            
+            // If not printable ASCII, it might be an encoded integer (e.g. "00 00 00 64" = 100)
+            if (strlen($hexBytes) <= 8) {
+                return (string)hexdec($hexBytes);
+            }
+            
+            // Otherwise fallback to filtering printable characters
+            $ascii = '';
+            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+                $byte = hexdec(substr($hexBytes, $i, 2));
+                if ($byte >= 32 && $byte <= 126) {
+                    $ascii .= chr($byte);
+                }
+            }
+            $ascii = trim($ascii);
+            return $ascii !== '' ? $ascii : 'N/A';
+        }
+
         $clean = trim(preg_replace([
             '/^STRING:\s*"/', 
             '/"$/', 
             '/^(INTEGER|Counter32|Gauge32|Timeticks):\s*/i'
         ], '', $value));
+
+        // Decode hex numbers prefixed with 0x (common for Pantum printers)
+        if (preg_match('/^0x([0-9a-fA-F]+)$/i', $clean, $matches)) {
+            return (string)hexdec($matches[1]);
+        }
+
         return (string)$clean;
     }
     
@@ -445,7 +495,8 @@ class PrinterDiscovery {
             'RICOH' => ['ricoh'],
             'KONICA' => ['konica', 'minolta'],
             'SAMSUNG' => ['samsung'],
-            'TOSHIBA' => ['toshiba']
+            'TOSHIBA' => ['toshiba'],
+            'PANTUM' => ['pantum']
         ];
         
         foreach ($vendors as $vendor => $keywords) {
@@ -464,10 +515,10 @@ class PrinterDiscovery {
     private function determineColor(string $description): string {
         $description = strtolower($description);
         
-        if (preg_match('/black|noir|negro|k\b|\bk/i', $description)) return 'black';
-        if (preg_match('/cyan|blue|c\b|\bc/i', $description)) return 'cyan';
-        if (preg_match('/magenta|pink|m\b|\bm/i', $description)) return 'magenta';
-        if (preg_match('/yellow|jaune|y\b|\by/i', $description)) return 'yellow';
+        if (preg_match('/\b(black|noir|negro|k)\b/i', $description)) return 'black';
+        if (preg_match('/\b(cyan|blue|c)\b/i', $description)) return 'cyan';
+        if (preg_match('/\b(magenta|pink|m)\b/i', $description)) return 'magenta';
+        if (preg_match('/\b(yellow|jaune|y)\b/i', $description)) return 'yellow';
         
         // Fallback: if it says "toner" but no color, assume black
         if (strpos($description, 'toner') !== false) return 'black';
@@ -476,16 +527,16 @@ class PrinterDiscovery {
     }
     
     /**
-     * Get Brother Inkjet Levels
+     * Get Brother Consumable Levels
      * 
-     * Brother inkjet printers (MFC-J, DCP-J series) use a proprietary OID
-     * that returns hex-encoded ink level data.
-     * OID: .1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.8.0 (brInfoMaintenance)
+     * Brother printers (both inkjets like MFC-J and modern lasers like DCP-L/MFC-L)
+     * use a proprietary OID (brInfoMaintenance) that returns hex-encoded consumable data.
+     * OID: .1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.8.0 (or .1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.8)
      */
-    private function getBrotherInkjetLevels(string $ip): array {
+    private function getBrotherConsumableLevels(string $ip): array {
         $levels = [];
         
-        // Try the Brother proprietary OID for ink levels
+        // Try the Brother proprietary OID for maintenance details
         $brotherOid = '.1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.8.0';
         $response = @snmp2_get($ip, $this->community, $brotherOid, $this->timeout, $this->retries);
         
@@ -499,50 +550,59 @@ class PrinterDiscovery {
             return $levels;
         }
         
-        // The response is a hex string. Try to parse it.
-        // Format: The hex data contains 7-byte groups where:
-        // Byte 1: Color identifier (0x81=Black, 0x82=Cyan, 0x83=Magenta, 0x84=Yellow)
-        // Byte 5 or 6: Percentage value
+        // Clean up the hex representation
+        if (preg_match('/^Hex-STRING:\s*/i', $response)) {
+            $cleanValue = preg_replace('/^Hex-STRING:\s*/i', '', $response);
+            $hexData = str_replace([' ', "\n", "\r"], '', $cleanValue);
+        } else {
+            $hexData = bin2hex($response);
+        }
         
-        // Convert response to clean hex
-        $cleanValue = $this->sanitizeSnmpValue($response);
-        
-        // Remove "Hex-STRING: " prefix if present
-        $cleanValue = preg_replace('/^Hex-STRING:\s*/i', '', $cleanValue);
-        
-        // Convert spaces and format to pure hex
-        $hexData = str_replace([' ', '\n', '\r'], '', $cleanValue);
-        
-        // Try to find color markers and their levels
-        // Brother format: 81 XX XX XX YY (where YY is the percentage for black)
-        $colorMap = [
-            '81' => 'black',
-            '82' => 'cyan', 
-            '83' => 'magenta',
-            '84' => 'yellow'
-        ];
-        
-        // Method 1: Look for the pattern where ink levels are encoded
-        // Each cartridge info block is typically 7 bytes
-        foreach ($colorMap as $marker => $color) {
-            $pos = strpos(strtoupper($hexData), strtoupper($marker));
-            if ($pos !== false && $pos + 10 <= strlen($hexData)) {
-                // Get the byte at offset +8 (4 bytes = 8 hex chars after marker)
-                // This is where the percentage typically is
-                $percentHex = substr($hexData, $pos + 8, 2);
-                $percentage = hexdec($percentHex);
+        // Try to parse using our robust regex segment pattern: [ID] 01 04 [4-byte value]
+        if (preg_match_all('/([0-9a-fA-F]{2})0104([0-9a-fA-F]{8})/i', $hexData, $matches, PREG_SET_ORDER)) {
+            $colorMap = [
+                '81' => 'black',
+                '82' => 'cyan', 
+                '83' => 'magenta',
+                '84' => 'yellow',
+                '41' => 'other', // Drum Unit
+                '51' => 'other', // Drum Unit alt 1
+                '52' => 'other'  // Drum Unit alt 2
+            ];
+            
+            foreach ($matches as $match) {
+                $marker = strtoupper($match[1]);
+                $valHex = $match[2];
                 
-                // Validate percentage is reasonable (0-100)
-                if ($percentage >= 0 && $percentage <= 100) {
+                if (isset($colorMap[$marker])) {
+                    $color = $colorMap[$marker];
+                    if ($color === 'other') continue; // Hide other levels like drum units
+                    
+                    $valDec = hexdec($valHex);
+                    
+                    // Decode percentage or status
+                    // Brother represents remaining life as either:
+                    // 1) 0-100 directly (e.g. 00000046 = 70%)
+                    // 2) 0-10000 representing 0.01% units (e.g. 0000238c = 9100 / 100 = 91%)
+                    $percentage = $valDec;
+                    if ($valDec > 100) {
+                        $percentage = $valDec / 100.0;
+                    }
+                    $percentage = min(100.0, max(0.0, $percentage));
+                    
+                    $description = ucfirst($color) . ' Toner';
+                    if ($marker === '41' || $marker === '51' || $marker === '52') {
+                        $description = 'Drum Unit';
+                    }
+                    
                     $levels[$color] = [
                         'percentage' => $percentage,
                         'current' => $percentage,
                         'max' => 100,
                         'color' => $color,
-                        'description' => ucfirst($color) . ' Ink'
+                        'description' => $description
                     ];
                     
-                    // Add status for empty/not genuine
                     if ($percentage <= 0) {
                         $levels[$color]['status'] = 'empty_or_not_genuine';
                     }
@@ -550,9 +610,8 @@ class PrinterDiscovery {
             }
         }
         
-        // If method 1 didn't work, try alternative Brother OIDs
+        // If brInfoMaintenance returned nothing, try individual ink level OIDs as fallback
         if (empty($levels)) {
-            // Try individual ink level OIDs (some Brother models use these)
             $inkOids = [
                 'black' => '.1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.10.0',
                 'cyan' => '.1.3.6.1.4.1.2435.2.3.9.4.2.1.5.5.11.0',

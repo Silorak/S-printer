@@ -100,7 +100,6 @@ Runtime application code under `src/` is owned by `src/AGENTS.md`. CSS-specific 
 - Keep `architecture.md` and `architektura.md` synchronized when architecture-level documentation changes.
 - Keep Apache security headers in `apache-vhost.conf` and PHP/app-level headers aligned when changing browser security policy.
 - Do not commit runtime cache, database volumes, logs, generated backups, or local environment secrets.
-- If `graphify-out/` exists in a working copy, read `graphify-out/GRAPH_REPORT.md` before architecture/codebase changes and refresh the graph after code modifications according to the project-level graphify rules.
 
 ## Work Guidance
 
@@ -145,6 +144,12 @@ For Phase 2 renderer/DOM-safety contracts, run:
 
 ```sh
 node tools/verify-phase2.mjs
+```
+
+For Phase 3 performance/cache/cancellation contracts, run:
+
+```sh
+node tools/verify-phase3.mjs
 ```
 
 For DB/schema changes, inspect the live schema:

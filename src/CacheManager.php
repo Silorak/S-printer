@@ -6,7 +6,7 @@ declare(strict_types=1);
  * 
  * This class handles saving data to temporary files (caching).
  * We use this to avoid asking the printer for its status every single second.
- * Instead, we ask once, save it here for 5 minutes, and show the saved copy.
+ * Instead, we ask once, save it here for a configured TTL, and show the saved copy.
  */
 class CacheManager {
     private string $cacheDir; // Where to save the files (e.g., 'cache/')

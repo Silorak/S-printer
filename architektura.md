@@ -6,7 +6,7 @@
 
 ## 1. Sistemos apžvalga
 
-Sprinter yra žiniatinklio pagrindu veikianti spausdintuvų stebėjimo programa, kuri apklausia tinklo spausdintuvus naudodama SNMP (Simple Network Management Protocol) protokolą ir realiu laiku rodo dažų bei rašalo lygius informacinėje skydelyje (angl. dashboard). Programa yra konteinerizuota naudojant Docker technologiją ir duomenų saugojimui naudoja MariaDB duomenų bazę.
+Sprinter yra žiniatinklio pagrindu veikianti spausdintuvų stebėjimo programa, kuri apklausia tinklo spausdintuvus naudodama SNMP (Simple Network Management Protocol) protokolą ir realiu laiku rodo dažų bei rašalo lygius autentifikuotame informaciniame skydelyje (angl. dashboard). Programa yra konteinerizuota naudojant Docker technologiją ir duomenų saugojimui naudoja MariaDB duomenų bazę, kurioje saugomi spausdintuvai, aukštai, nustatymai ir vietiniai vartotojai.
 
 ### 1.1 Aukšto lygio architektūra
 
@@ -23,6 +23,7 @@ graph TD
             ApiPHP["api.php<br/><i>REST API sąsaja</i>"]
         end
         subgraph Core["Pagrindinės paslaugos"]
+            Auth["Auth.php<br/><i>Sesijos / CSRF / teisės</i>"]
             Discovery["PrinterDiscovery.php<br/><i>SNMP variklis</i>"]
             DB["Database.php<br/><i>PDO duomenų prieiga</i>"]
             Cache["CacheManager.php<br/><i>Failų podėlis</i>"]
@@ -39,9 +40,11 @@ graph TD
         PrinterN["Spausdintuvas N"]
     end
 
-    Browser -->|"HTTP GET / AJAX"| IndexPHP
-    Browser -->|"Fetch API"| ApiPHP
+    Browser -->|"HTTP GET / registracija / prisijungimas / skydelis"| IndexPHP
+    Browser -->|"apiFetch + X-CSRF-Token"| ApiPHP
 
+    IndexPHP --> Auth
+    ApiPHP --> Auth
     IndexPHP --> Discovery
     IndexPHP --> DB
     IndexPHP --> Cache
@@ -58,18 +61,22 @@ graph TD
 
 ```mermaid
 graph TD
-    A["🌐 HTTP GET /"] --> B["getPrinters()"]
-    B --> C["Duomenų bazė grąžina<br/>spausdintuvų įrašus<br/><i>IP, pavadinimas, aukštas</i>"]
-    C --> D{"CacheManager<br/>get('printers_data')"}
-
-    D -->|"Podėlio pataika"| E["Naudoti podėlyje<br/>esančius duomenis"]
-    D -->|"Podėlio nepataikyta"| F["Kiekvienam spausdintuvui:<br/>getPrinterData()"]
-
-    F --> G["SNMP užklausa<br/><i>Žr. 1.2.1 toliau</i>"]
-    G --> H["set('printers_data',<br/>data, TTL=5min)"]
-
-    E --> I["Generuoti HTML<br/>spausdintuvų korteles"]
-    H --> I
+    A["🌐 HTTP GET /"] --> B["Paleisti saugią sesiją<br/>Auth.php"]
+    B --> C{"Ar yra vartotojų?"}
+    C -->|"Ne"| D["Rodyti pagrindinio administratoriaus<br/>registraciją"]
+    C -->|"Taip"| E{"Ar sesija autentifikuota<br/>ir aktyvi?"}
+    E -->|"Ne"| F["Rodyti prisijungimą"]
+    E -->|"Taip"| G["Įkelti DB įrašus<br/>spausdintuvai, aukštai, nustatymai, teisės"]
+    G --> H["Sugeneruoti kortelių karkasus<br/>+ lygių JSON data atributus"]
+    H --> I["Įterpti nustatymus / aukštus<br/>csrfToken/currentUser/currentPermissions"]
+    I --> J["script.js užpildo<br/>pradinius lygių blokus"]
+    J --> K["refreshAllPrinters()<br/><i>lygiagretumo riba: 4</i>"]
+    K --> L["apiFetch refresh_printer<br/>su X-CSRF-Token"]
+    L --> M["api.php autentifikuoja,<br/>tikrina CSRF ir teises"]
+    M --> N["DB paieška pagal IP"]
+    N --> O["SNMP užklausa<br/><i>Žr. 1.2.1 toliau</i>"]
+    O --> P["Grąžinti JSON<br/>būsena + lygiai"]
+    P --> Q["DOM rendereris atnaujina<br/>kortelės būseną ir lygius"]
 ```
 
 #### 1.2.1 SNMP užklausos detalės (kiekvienam spausdintuvui)
@@ -659,20 +666,49 @@ if (in_array($key, ['hide_ip', 'show_serial'])) {
 }
 ```
 
-### 6.3 CSRF prevencija per Content-Type užtikrinimą
+### 6.3 Autentifikavimas, autorizavimas ir CSRF žetonai
 
-API naudoja lengvą CSRF prevencijos strategiją, kurią rekomenduoja OWASP JSON tipo sąsajoms. Kadangi visi API kreipiniai naudoja `Content-Type: application/json`, tai automatiškai iššaukia CORS išankstinę užklausą (angl. preflight) tarpkilminėms užklausoms, todėl pilna CSRF žetonų sistema nereikalinga. Vietoj to, griežta Content-Type validacija serverio pusėje neleidžia atakuotojams apeiti išankstinės užklausos naudojant `text/plain` formų pateikimus:
+Programa dabar naudoja vietinio pirmojo administratoriaus modelį. Pirmo paleidimo metu `index.php` rodo registracijos formą tik tada, kai `users` lentelė tuščia. Kai pagrindinė paskyra jau egzistuoja, neautentifikuotos užklausos rodo prisijungimą; Docker perkrovimai palieka vartotojų lentelę MariaDB duomenų bazėje, todėl registracija nebekartojama.
+
+`Auth.php` centralizuoja sesijų ir slaptažodžių apdorojimą:
 
 ```php
-// Griežta Content-Type validacija POST užklausoms (OWASP CSRF prevencija)
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-    if (stripos($contentType, 'application/json') === false) {
-        http_response_code(415); // Nepalaikomas medijos tipas (RFC 7231)
-        sendError('Content-Type must be application/json');
+session_set_cookie_params([
+    'secure' => sprinterIsHttps(),
+    'httponly' => true,
+    'samesite' => 'Lax'
+]);
+
+$hash = password_hash($password, PASSWORD_ARGON2ID /* arba PASSWORD_DEFAULT */);
+if (password_verify($password, $user['password_hash'])) {
+    session_regenerate_id(true);
+}
+```
+
+Autentifikuotas puslapis įterpia CSRF žetoną. Naršyklės kreipiniai naudoja `apiFetch()`, kuris siunčia `X-CSRF-Token`; `api.php` patikrina jį per `hash_equals()` prieš vykdydamas veiksmą:
+
+```php
+function sprinterRequireCsrfToken(): void {
+    $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? null;
+    if (!sprinterVerifyCsrfToken(is_string($token) ? $token : null)) {
+        sprinterApiError('Invalid CSRF token', 403);
     }
 }
 ```
+
+Autorizavimas yra „deny-by-default“. API pirmiausia reikalauja aktyvaus vartotojo, tada tikrina konkretaus veiksmo teisę:
+
+```php
+$currentUser = sprinterRequireApiUser($db);
+sprinterRequireCsrfToken();
+
+case 'delete_printer':
+    requirePost();
+    sprinterRequirePermission($currentUser, 'can_delete_printer');
+    // ... ištrinti spausdintuvą
+```
+
+Pagrindinis administratorius visada turi visas teises ir gali kurti bazinius vartotojus. Baziniai vartotojai gali tik peržiūrėti duomenis, kol administratorius jiems įjungia pridėjimo, redagavimo, trynimo, aukštų, nustatymų arba importo/eksporto teises.
 
 ### 6.4 HTTP metodų užtikrinimas
 
@@ -703,11 +739,18 @@ sendError('Failed to add printer. The IP may already exist.');
 ### 6.6 Kliento pusės XSS prevencija
 
 ```javascript
-// Saugus HTML ekranavimas dinaminiam turiniui
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;   // textContent niekada neanalizuoja HTML
-    return div.innerHTML;
+// Saugus DOM kūrimas dinaminiam turiniui
+function createTextMessage(className, text) {
+    const message = document.createElement('div');
+    message.className = className;
+    message.textContent = text; // textContent niekada neanalizuoja HTML
+    return message;
+}
+
+function renderLevelsSection(levelsSection, status, levels, lastLevels) {
+    const fragment = document.createDocumentFragment();
+    // lygių / pranešimų mazgai pridedami DOM API...
+    levelsSection.replaceChildren(fragment);
 }
 ```
 
@@ -780,46 +823,52 @@ private function getSupplyLevels(string $ip): array {
 }
 ```
 
-### 7.3 Podėliavimo strategija: Cache-Aside šablonas su rašymo invalidacija
+### 7.3 Podėliavimo strategija: trumpas kiekvieno spausdintuvo atnaujinimo podėlis
 
 ```mermaid
 graph TD
-    subgraph Read["Skaitymo kelias (index.php)"]
-        R1["Užklausa gauta"] --> R2{"Podėlyje yra<br/>printers_data?"}
-        R2 -->|"Pataikyta"| R3["Naudoti podėlio duomenis"]
-        R2 -->|"Nepataikyta"| R4["Apklausti visus<br/>spausdintuvus per SNMP"]
-        R4 --> R5["Saugoti podėlyje<br/><i>TTL = 5 minutės</i>"]
-        R5 --> R3
+    subgraph Refresh["Atnaujinimo kelias (api.php?action=refresh_printer)"]
+        R1["Užklausa vienam IP"] --> R2{"Podėlyje yra<br/>refresh_printer_IP?"}
+        R2 -->|"Pataikyta<br/>TTL 15 s"| R3["Grąžinti podėlio JSON"]
+        R2 -->|"Nepataikyta"| R4["DB paieška pagal IP"]
+        R4 --> R5["SNMP užklausa"]
+        R5 --> R6{"Lygiai pasikeitė?"}
+        R6 -->|"Taip"| R7["Atnaujinti last_levels"]
+        R6 -->|"Ne"| R8["Praleisti DB rašymą"]
+        R7 --> R9["Trumpam saugoti atsakymą"]
+        R8 --> R9
+        R9 --> R10["Grąžinti JSON"]
     end
 
-    subgraph Write["Rašymo kelias (api.php)"]
-        W1["Pridėti / redaguoti /<br/>ištrinti spausdintuvą"] --> W2["Modifikuoti duomenų bazę"]
-        W2 --> W3["Invaliduoti podėlį<br/>delete('printers_data')"]
-        W3 --> W4["Kita užklausa inicijuos<br/>naują SNMP apklausą"]
+    subgraph Write["Modifikacijų kelias"]
+        W1["Pridėti / redaguoti /<br/>ištrinti / importuoti"] --> W2["Modifikuoti duomenų bazę"]
+        W2 --> W3["invalidateRuntimeCache()<br/>išvalo per-spausdintuvo podėlius"]
+        W3 --> W4["Kitas atnaujinimas vykdo SNMP"]
     end
 ```
 
 ```php
-// Skaitymo kelias: pirmiausia tikrinti podėlį (index.php)
-$cachedData = $cacheManager->get($cacheKey);
-if (!empty($cachedData)) {
-    $printers = $cachedData;  // Naudoti podėlyje esančius SNMP duomenis
+// Atnaujinimo kelias: trumpas kiekvieno spausdintuvo podėlis (api.php)
+$refreshCache = new CacheManager('cache', REFRESH_CACHE_TTL_SECONDS);
+$cacheKey = 'refresh_printer_' . $ip;
+$cachedRefresh = $refreshCache->get($cacheKey);
+if (is_array($cachedRefresh)) {
+    sendResponse($cachedRefresh);
 }
 
-// Apklausti spausdintuvus tik jei podėlis tuščias
-if (empty($printers)) {
-    foreach ($dbPrinters as $dbPrinter) {
-        $data = $discovery->getPrinterData($dbPrinter);
-        $printers[$dbPrinter['ip']] = $data;
-    }
-    $cacheManager->set($cacheKey, $printers);  // Saugoti 5 minutes
+$data = $discovery->getPrinterData($dbPrinter);
+if (($data['info']['status'] ?? null) === 'online' && !empty($data['levels'])) {
+    $db->updatePrinterLevelsIfChanged(
+        (int)$dbPrinter['id'],
+        $data['levels'],
+        $dbPrinter['last_levels'] ?? null
+    );
 }
+$refreshCache->set($cacheKey, $data);
 
-// Rašymo kelias: invaliduoti podėlį po modifikacijų (api.php)
-// Užtikrina, kad informacinis skydelis iškart rodytų pakeitimus
-if ($db->addPrinter($input)) {
-    (new CacheManager('cache'))->delete('printers_data');
-    sendResponse();
+// Modifikacijų kelias: invaliduoti visus runtime podėlio įrašus
+function invalidateRuntimeCache(): void {
+    (new CacheManager('cache'))->clear();
 }
 ```
 
@@ -830,6 +879,22 @@ if ($db->addPrinter($input)) {
 ```mermaid
 erDiagram
     FLOORS ||--o{ PRINTERS : "turi"
+    USERS {
+        int id PK
+        varchar username UK
+        varchar password_hash
+        boolean is_admin
+        boolean can_add_printer
+        boolean can_edit_printer
+        boolean can_delete_printer
+        boolean can_manage_floors
+        boolean can_manage_settings
+        boolean can_import_export
+        boolean is_active
+        timestamp last_login_at
+        timestamp created_at
+        timestamp updated_at
+    }
     FLOORS {
         int id PK
         varchar name

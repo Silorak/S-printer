@@ -10,7 +10,16 @@ This document records the research, comparisons, and selected implementation pha
 | DOM XSS | OWASP DOM Based XSS Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/DOM_based_XSS_Prevention_Cheat_Sheet.html | Prefer safe DOM population methods/properties like `textContent`; avoid dangerous sinks such as `innerHTML` for untrusted data. |
 | `innerHTML` risk | MDN `Element.innerHTML` — https://developer.mozilla.org/en-US/docs/Web/API/Element/innerHTML | `innerHTML` is an injection sink and can be an XSS vector; use `textContent` for plain text. |
 | DOM batching | MDN `DocumentFragment` — https://developer.mozilla.org/en-US/docs/Web/API/DocumentFragment | Fragments are useful for building nodes outside the active DOM; MDN cautions performance gains are often overstated, so optimize for readability unless measured. |
+| Request cancellation | MDN `AbortController` — https://developer.mozilla.org/en-US/docs/Web/API/AbortController | `AbortController` can abort one or more web requests and is baseline/widely available; use it to cancel stale refresh fetches. |
+| DOM node replacement/reuse | MDN `Node.replaceChild()` — https://developer.mozilla.org/en-US/docs/Web/API/Node/replaceChild | Existing nodes can be replaced/moved; this supports keyed DOM synchronization when only some level bars change. |
 | SSRF / network probing | OWASP SSRF Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html | Validate IPs, prefer allowlists for trusted destinations, and treat server-side network access as a defended boundary. |
+| Authentication | OWASP Authentication Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html | Use secure password handling, generic login failures, and session renewal after authentication. |
+| Session management | OWASP Session Management Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html | Use secure cookie attributes, server-side sessions, and regenerate session identifiers on privilege changes/login. |
+| Password storage | OWASP Password Storage Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html | Store passwords with modern one-way password hashing, not reversible encryption. |
+| Authorization | OWASP Authorization Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html | Enforce least privilege and deny-by-default server-side permission checks. |
+| CSRF | OWASP CSRF Prevention Cheat Sheet — https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html | Use CSRF tokens for state-changing authenticated requests; compare tokens safely. |
+| PHP password API | PHP manual `password_hash()` / `password_verify()` — https://www.php.net/manual/en/function.password-hash.php | Use PHP password API instead of custom hashing. |
+| PHP sessions/constant-time compare | PHP manual `session_regenerate_id()` / `hash_equals()` — https://www.php.net/manual/en/function.session-regenerate-id.php | Regenerate session IDs after auth and compare secret tokens using timing-safe equality. |
 | Docker readiness | Docker Compose startup order docs — https://docs.docker.com/compose/how-tos/startup-order/ | `depends_on` starts dependencies in order but does not wait for readiness; use `condition: service_healthy` with `healthcheck` for ready dependencies. |
 | Docker healthcheck syntax | Docker Compose file reference — https://docs.docker.com/reference/compose-file/services/#healthcheck | Use a service `healthcheck` to define readiness/health commands and timing. |
 
@@ -94,12 +103,38 @@ Selected Phase 1 behavior:
 - Fix floor+search filtering to avoid incorrect DOM state.
 - Consider refresh overlap guard if minimally invasive.
 
-### 6. Docker readiness
+Selected Phase 3 behavior:
+
+- Add a short per-printer refresh cache for `refresh_printer` responses.
+- Skip `last_levels` DB writes when the normalized JSON payload has not changed.
+- Use `AbortController` to cancel stale refresh runs.
+- Prioritize visible/current-floor cards before background cards.
+- Reuse keyed level-bar DOM nodes and skip unchanged level-section renders.
+
+### 6. Authentication and authorization
+
+| Option | Pros | Cons | Decision |
+|---|---|---|---|
+| Keep trusted-LAN/no-login model | Simplest local-only deployment | Any reachable user can mutate printers/settings and export data | Reject |
+| Single hardcoded admin password | Small implementation | No per-user accountability or least privilege; awkward rotation | Reject |
+| First-run local admin + per-user permissions | Matches self-hosted app expectations; survives Docker restarts through DB; supports view-only/basic users | Requires schema, UI, sessions, CSRF, permission checks | Select Phase 4 |
+| External SSO/OIDC | Strong for enterprise deployments | Adds provider configuration and dependencies beyond no-framework app scope | Defer |
+
+Selected Phase 4 behavior:
+
+- If no user exists, `/` renders first-admin registration.
+- After the main admin exists, `/` renders login for unauthenticated sessions, including after Docker restarts.
+- Main admin can create basic users and toggle add/edit/delete/floor/settings/import-export permissions.
+- Passwords are stored with PHP `password_hash()` and checked with `password_verify()`.
+- Sessions use HttpOnly, SameSite=Lax cookies, regenerate IDs after auth, and carry a CSRF token.
+- `api.php` requires an active user, validates `X-CSRF-Token`, and then enforces per-action permissions.
+
+### 7. Docker readiness
 
 | Option | Pros | Cons | Decision |
 |---|---|---|---|
 | Keep current `depends_on` | Simple | Docker docs say it does not wait for readiness | Reject long-term |
-| Add DB healthcheck + `condition: service_healthy` | Official Compose pattern; better startup reliability | Requires `mariadb-admin` command availability in DB image | Select Phase 4 |
+| Add DB healthcheck + `condition: service_healthy` | Official Compose pattern; better startup reliability | Requires `mariadb-admin` command availability in DB image | Select Phase 5 |
 | Add retry loop in PHP DB constructor | Works outside Compose too | Adds app-level startup complexity | Defer; maybe pair with Compose healthcheck |
 
 Selected phase:
@@ -141,7 +176,7 @@ Backed by MDN DOM batching guidance and app-specific hot-path analysis.
 - Update existing level DOM nodes where practical instead of rebuilding whole sections.
 - Refresh visible printers first when a floor filter is active.
 
-### Phase 4 — deployment/accessibility hardening
+### Phase 5 — deployment/accessibility hardening
 
 Backed by Docker Compose readiness docs and accessibility best practices to be researched before implementation.
 
@@ -204,3 +239,58 @@ node --check src/script.js
 ```
 
 `tools/verify-phase2.mjs` also runs the Phase 1 verifier and JS syntax check. PHP and Docker runtime validation remain blocked in the current shell because `php` and `docker` are unavailable.
+
+## Phase 3 status
+
+Implemented in this pass:
+
+- `api.php` now uses `REFRESH_CACHE_TTL_SECONDS = 15` for short per-printer `refresh_printer_<ip>` cache entries.
+- `api.php` now reads the per-printer refresh cache before SNMP and stores fresh refresh responses after SNMP.
+- `api.php` now centralizes runtime cache invalidation through `invalidateRuntimeCache()` and clears per-printer refresh caches on printer/import mutations.
+- `Database.php` now provides `hasLevelsChanged()` and `updatePrinterLevelsIfChanged()` with recursive key normalization to avoid no-op `last_levels` writes.
+- `script.js` now uses `AbortController` and per-card `WeakMap` refresh tokens so stale refreshes can be canceled without stale cleanup mutating newer card state.
+- `script.js` now prioritizes active-floor / visible printer cards before background cards during refresh-all.
+- `script.js` now computes stable level-render signatures, skips unchanged level sections, and syncs keyed level bars through `updateLevelBar()` / `syncLevelBars()`.
+- `tools/verify-phase3.mjs` verifies the Phase 3 cache, DB-write-skip, cancellation, refresh-ordering, and DOM-reuse contracts plus Phase 2 regression contracts.
+
+Validation completed:
+
+```sh
+node tools/verify-phase3.mjs
+node tools/verify-phase2.mjs
+node tools/verify-phase1.mjs
+node --check src/script.js
+```
+
+`tools/verify-phase3.mjs` also runs the Phase 2 verifier and JS syntax check. PHP and Docker runtime validation remain blocked in the current shell if `php` and `docker` are unavailable.
+
+## Phase 4 status — Authentication and authorization
+
+Implemented in this pass:
+
+- `src/Auth.php` centralizes hardened session startup, first-admin registration, login/logout, password hashing/verification, CSRF token generation/validation, and permission helpers.
+- `Database.php` now creates and manages `users(username, password_hash, is_admin, can_add_printer, can_edit_printer, can_delete_printer, can_manage_floors, can_manage_settings, can_import_export, is_active, last_login_at, created_at, updated_at)`.
+- `index.php` forces first-admin registration only while no user exists; once a main account exists it renders login for unauthenticated sessions, so Docker restarts do not force re-registration.
+- The authenticated dashboard bootstraps `csrfToken`, `currentUser`, and `currentPermissions` for the browser.
+- `api.php` requires an authenticated active user for all API actions, validates `X-CSRF-Token`, and enforces deny-by-default per-action permissions.
+- Main admin can create basic users and toggle permissions in the Settings → Users UI. Basic users are view-only unless permissions are granted.
+- `script.js` now routes API calls through `apiFetch()` so the CSRF token is sent consistently, and it gates UI affordances with `hasPermission()` while leaving server checks authoritative.
+- `src/css/modals.css` now styles first-run/login auth screens and user-management controls.
+- `tools/verify-phase4-auth.mjs` verifies the auth/session/password/CSRF/schema/API/UI/documentation contracts and runs Phase 3 regression checks.
+
+Validation target:
+
+```sh
+node tools/verify-phase4-auth.mjs
+node --check src/script.js
+php -l src/Auth.php src/index.php src/api.php src/Database.php
+```
+
+Browser/runtime checks still needed with PHP/Docker available:
+
+- first-run main-admin registration
+- logout/login
+- Docker restart with existing `users` table showing login, not registration
+- create basic view-only user
+- toggle add/edit/delete/floor/settings/import-export permissions and confirm denied actions stay hidden and API-denied
+
