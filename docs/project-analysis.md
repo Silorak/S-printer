@@ -140,6 +140,7 @@ API actions:
 - `get_users`
 - `create_user`
 - `update_user_permissions`
+- `change_own_password`
 
 Strengths:
 
@@ -223,8 +224,8 @@ Strengths:
 
 Risks:
 
-- Inline `onclick` handlers require global JS functions and force a CSP that allows inline script.
-- The bootstrap inline script and inline event handlers still affect CSP tightening.
+- Printer edit/delete buttons use delegated event listeners instead of inline `onclick` handlers.
+- Bootstrap data is emitted as inert JSON in `#sprinterBootstrap` and parsed by `script.js`, avoiding executable inline bootstrap JavaScript.
 
 ### `script.js`
 
@@ -233,6 +234,7 @@ Responsibilities:
 - Bootstraps settings, floors, CSRF token, current user, and permissions from `window.__SPRINTER_BOOTSTRAP__` with limited API fallback.
 - Sends all API calls through `apiFetch()` with `X-CSRF-Token`.
 - Gates UI controls with `hasPermission()` and wires main-admin user-management forms.
+- Wires critical header controls (`setupThemeToggle()`, `setupAccountMenu()`, `setupSettings()`) before awaited app-data fallback so settings/theme/account controls are clickable immediately after login.
 - Theme toggle with localStorage.
 - Search and floor filtering.
 - Add/edit/delete printer modal flows.
@@ -248,7 +250,8 @@ Important contracts:
 
 - Uses API response envelope from `api.php`.
 - Depends on DOM IDs/classes emitted by `index.php`.
-- `openEditModal()` and `deletePrinter()` are global due inline handlers.
+- Account menu depends on `accountMenu`, `accountMenuBtn`, `accountDropdown`, `togglePasswordChange`, `changePasswordForm`, and updates both the bootstrapped CSRF token and hidden CSRF form fields after password changes.
+- Printer card edit/delete actions depend on `data-action`, `data-printer-id`, `data-printer-info`, and delegated handling in `setupPrinterActions()`.
 - Uses `throttlePromises(tasks, 4)` for refresh concurrency.
 - Uses `AbortController` and `WeakMap` card tokens so stale refresh cleanup does not corrupt newer card state.
 - `sortCubesForRefresh()` prioritizes active-floor / visible cards.
@@ -258,6 +261,11 @@ Risks:
 - Runtime browser validation is still needed because static checks cannot prove rendered UI behavior.
 - Runtime/browser profiling is still needed to quantify DOM reuse/cache impact on real printer counts.
 - Modals lack robust accessibility semantics and focus handling.
+- Modals now use `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and a focus trap with Escape-to-close and focus return.
+- Level bars now expose `role="progressbar"` with ARIA value attributes.
+- Status indicators now use `role="img"` with `aria-label`.
+- CSS now respects `prefers-reduced-motion` to disable animations for users who request it.
+- Cubes are auto-sorted by lowest supply level after each full refresh so urgent printers appear first.
 
 ## CSS analysis
 
@@ -265,7 +273,7 @@ The CSS is already modularized:
 
 - `base.css`: foundational design tokens and themes.
 - `layout.css`: macro layout and structural page regions.
-- `components.css`: printer cards and reusable controls.
+- `components.css`: printer cards, reusable controls, and account dropdown/profile controls.
 - `modals.css`: modal/form/settings UI.
 - `responsive.css`: animations, media queries, and late overrides.
 
@@ -275,6 +283,7 @@ Contracts:
 - `responsive.css` is not purely responsive; it deliberately overrides component styles.
 - CSS custom properties define the theme system.
 - Dynamic state classes from PHP/JS drive visual behavior.
+- Global focus rings are intentionally compact for text fields; large keyboard rings are reserved for buttons/nav/menu controls.
 
 Risks:
 
@@ -324,7 +333,7 @@ Strengths:
 
 Risks:
 
-- CSP allows `'unsafe-inline'`, required by current inline handlers/styles but weaker than ideal.
+- CSP no longer allows `'unsafe-inline'` for scripts; style policy still allows inline styles until all style requirements are audited.
 - Header values should stay aligned with PHP app headers.
 
 ## Security assessment
@@ -337,13 +346,13 @@ Authentication and authorization status:
 - Sessions use HttpOnly, SameSite=Lax cookies and regenerate IDs after registration/login.
 - API calls require an authenticated active user plus `X-CSRF-Token`; write/privileged actions then enforce explicit permissions.
 - Basic users are view-only unless the main admin toggles add/edit/delete/floor/settings/import-export permissions.
+- Authenticated users can change their own password through the account dropdown; the endpoint verifies the current password, validates the new password, regenerates the session ID, and rotates the CSRF token.
 
 High-priority issues before broader exposure:
 
 1. **Server-side request/probe risk remains permissioned, not eliminated.** Users granted `can_add_printer` can trigger SNMP probes from the server network; add rate limits and subnet allowlisting before untrusted deployment.
-2. **Residual frontend injection/CSP risk.** Dynamic level rendering now uses DOM APIs, but inline handlers/bootstrap still require a weak CSP.
-3. **Weak CSP due inline code/styles.** Tightening CSP requires removing inline handlers and moving bootstrap data to a non-inline pattern.
-4. **Account recovery policy.** Lost main-admin credentials currently require direct DB intervention.
+2. **Residual frontend injection/CSP risk.** Dynamic level rendering now uses DOM APIs and executable inline script was removed, but CSP still allows inline styles.
+3. **Account recovery policy.** Lost main-admin credentials currently require direct DB intervention.
 
 Medium-priority issues:
 
@@ -373,7 +382,8 @@ Available checks completed during this adaptation:
 - Added static Phase 1, Phase 2, Phase 3, and Phase 4 auth contract verifiers under `tools/`.
 - Phase 2 static verification confirms JS-owned level rendering, bootstrap data, serial formatting deduplication, and Phase 1 regression contracts.
 - Phase 3 static verification confirms short refresh caching, unchanged-level DB write skip, abortable refreshes, active-floor refresh ordering, DOM signature skips, and keyed level-bar reuse.
-- Phase 4 static verification confirms first-admin registration/login contracts, users schema, password/session/CSRF helpers, API permission checks, and user-management UI wiring.
+- Phase 4 static verification confirms first-admin registration/login contracts, users schema, password/session/CSRF helpers, API permission checks, account menu/password-change wiring, and user-management UI wiring.
+- Phase 5 static verification confirms CSP script hardening: inert bootstrap JSON, delegated printer actions, no inline event handlers/executable inline scripts, no inline styles in `index.php`, and `script-src 'self'` without `'unsafe-inline'`.
 
 Environment blockers:
 
@@ -389,6 +399,8 @@ node tools/verify-phase1.mjs
 node tools/verify-phase2.mjs
 node tools/verify-phase3.mjs
 node tools/verify-phase4-auth.mjs
+node tools/verify-phase5-csp.mjs
+node tools/verify-phase6-a11y.mjs
 php -l src/index.php
 php -l src/api.php
 php -l src/Auth.php
@@ -406,11 +418,14 @@ curl -i http://localhost:8080/api.php?action=get_settings # unauthenticated shou
 
 ## Recommended next improvements
 
-1. Remove inline event handlers/bootstrap script so CSP can be tightened.
-2. Add SNMP endpoint rate limiting and optional subnet allowlisting before non-LAN deployment.
+1. Add SNMP endpoint rate limiting and optional subnet allowlisting before non-LAN deployment.
+2. Remove remaining inline-style dependency so `style-src 'unsafe-inline'` can also be dropped.
 3. Add audit logging for login/user/permission/printer mutations.
-4. Add accessibility improvements for modals, icon buttons, status, and level bars.
-5. Add runtime/API smoke tests once PHP/Docker are available, including first-admin registration, login, logout, basic user permissions, and restart persistence.
-6. Consider `.dockerignore` and production source-copy behavior in `Dockerfile`.
-7. Tune `REFRESH_CACHE_TTL_SECONDS` with real printer/browser measurements if needed.
-8. Keep DOX docs current whenever these contracts change.
+4. Add runtime/API smoke tests once PHP/Docker are available, including first-admin registration, login, logout, basic user permissions, and restart persistence.
+5. Consider `.dockerignore` and production source-copy behavior in `Dockerfile`.
+6. Tune `REFRESH_CACHE_TTL_SECONDS` with real printer/browser measurements if needed.
+7. Keep DOX docs current whenever these contracts change.
+8. Phase 7 security hardening: atomic first-admin registration (FOR UPDATE), explicit column list in getUsers() (no password_hash leak), generic import errors, Cache-Control no-store on API, Throwable catch, LOCK_EX on cache writes, 0775 cache dir perms.
+9. Phase 8 brute-force protection: per-account failed-attempt tracking (failed_attempts + locked_until columns), exponential lockout after 5 failures (15s base, doubling, capped at 1h), timing oracle fix (dummy password_verify for nonexistent users), auto-reset on successful login.
+- Phase 5 static verification confirms CSP script hardening: inert bootstrap JSON, delegated printer actions, no inline event handlers/executable inline scripts, no inline styles in `index.php`, and `script-src 'self'` without `'unsafe-inline'`.
+- Phase 6 static verification confirms accessibility contracts: modal dialog roles, focus trap, close buttons as `<button>`, status indicator ARIA, progressbar level bars, reduced-motion CSS, and lowest-level auto-sorting.

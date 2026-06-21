@@ -13,11 +13,8 @@ declare(strict_types=1);
  * 3. Get the current ink/toner levels.
  */
 class PrinterDiscovery {
-    private string $community; // The SNMP password (usually 'public')
-    private int $timeout;      // How long to wait for a response
-    private int $retries;      // How many times to try if it fails
-    
-    /**
+
+/**
      * Constructor
      * 
      * Sets up the SNMP settings.
@@ -27,8 +24,7 @@ class PrinterDiscovery {
         $this->timeout = $timeout;
         $this->retries = $retries;
     }
-    
-    /**
+/**
      * Detect Printer
      * 
      * Checks a single IP address to see if a printer is there.
@@ -56,8 +52,7 @@ class PrinterDiscovery {
         // Combine them into one array
         return array_merge($sysInfo, $printerInfo);
     }
-
-    /**
+/**
      * Get Printer Data (Live)
      * 
      * Fetches the latest status and ink levels for a printer that is already in our database.
@@ -101,8 +96,7 @@ class PrinterDiscovery {
         
         return $printerData;
     }
-    
-    /**
+/**
      * Get System Info
      * 
      * Gets basic device info like Name, Location, and Uptime.
@@ -133,8 +127,7 @@ class PrinterDiscovery {
         
         return $sysInfo;
     }
-    
-    /**
+/**
      * Get Printer Info
      * 
      * Gets printer-specific details like Model and Serial Number.
@@ -152,7 +145,8 @@ class PrinterDiscovery {
             'serial_number' => [
                 '.1.3.6.1.2.1.43.5.1.1.17.1',
                 '.1.3.6.1.2.1.43.5.1.1.17.1.1',
-                '.1.3.6.1.4.1.11.2.3.9.4.2.1.1.3.3.0' // HP-specific
+                '.1.3.6.1.4.1.11.2.3.9.4.2.1.1.3.3.0', // HP-specific
+                '.1.3.6.1.4.1.40093.1.1.1.5' // Pantum-specific
             ],
             'model' => [
                 '.1.3.6.1.2.1.25.3.2.1.3.1',
@@ -178,8 +172,7 @@ class PrinterDiscovery {
         
         return $info;
     }
-    
-    /**
+/**
      * Get Supply Levels
      * 
      * The magic part: asks the printer how much ink/toner is left.
@@ -278,8 +271,7 @@ class PrinterDiscovery {
         
         return $levels;
     }
-    
-    /**
+/**
      * Get Direct Supply Levels
      * 
      * Uses specific OIDs for known brands (HP, Brother, etc.) if the standard way fails.
@@ -341,7 +333,7 @@ class PrinterDiscovery {
             ];
         }
         
-        // Special case for Brother printers (inkjet and laser models alike)
+        // Special case for BROTHER printers (inkjet and laser models alike)
         // These use a proprietary OID (brInfoMaintenance) that returns hex-encoded consumable data
         if ($vendorName === 'BROTHER' && isset($sysDescr)) {
             $brotherLevels = $this->getBrotherConsumableLevels($ip);
@@ -349,6 +341,19 @@ class PrinterDiscovery {
                 return $brotherLevels;
             }
             // If the proprietary check failed/returned nothing, fall back to standard MIB walk
+            return [];
+        }
+
+        // Special case for PANTUM printers
+        // Pantum has a proprietary enterprise OID tree (.1.3.6.1.4.1.40093) that returns
+        // toner percentage directly (0-100), which is more reliable than the standard MIB
+        // walk (where Pantum returns percentage in the level field, causing bad current/max math).
+        if ($vendorName === 'PANTUM') {
+            $pantumLevels = $this->getPantumConsumableLevels($ip);
+            if (!empty($pantumLevels)) {
+                return $pantumLevels;
+            }
+            // Fall back to standard MIB walk if proprietary OIDs don't respond
             return [];
         }
         $data = [];
@@ -418,115 +423,53 @@ class PrinterDiscovery {
         
         return $levels;
     }
-    
-    /**
-     * Sanitize SNMP Value
-     * 
-     * Cleans up the raw text returned by the printer (removes "STRING:", quotes, etc.)
+/**
+     * Get Pantum Consumable Levels
+     *
+     * Pantum printers use a proprietary enterprise OID tree (.1.3.6.1.4.1.40093)
+     * that returns toner and drum life as direct percentage values (0-100).
+     *
+     * Research sources:
+     * - github.com/bdomitil/stat-pantum (Go implementation, confirmed working)
+     * - github.com/Shikkigayafr/Pantum_M6550NW (Zabbix template for Pantum M6550NW)
+     *
+     * Key OIDs:
+     * - Toner percentage:     .1.3.6.1.4.1.40093.1.1.3.13.2  (INTEGER 0-100)
+     * - Drum life percentage: .1.3.6.1.4.1.40093.8.1.4        (INTEGER 0-100)
+     * - Serial number:        .1.3.6.1.4.1.40093.1.1.1.5      (STRING)
+     * - Printer status:       .1.3.6.1.4.1.40093.1.1.3.9      (INTEGER 0-7)
+     *
+     * The standard Printer-MIB OID .1.3.6.1.2.1.43.11.1.1.9.1.1 also works on
+     * Pantum but returns percentage directly, which breaks the current/max division
+     * math in the generic MIB walk path. This method avoids that issue.
      */
-    private function sanitizeSnmpValue(string $value): string {
-        // Handle Hex-STRING values: convert hex bytes to ASCII or numeric integer
-        // e.g., "Hex-STRING: 48 50" → "HP", "Hex-STRING: 00 00 00 64" → "100", "Hex-STRING: 00 00 00 00" → "0"
-        if (preg_match('/^Hex-STRING:\s*/i', $value)) {
-            $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $value));
-            $hexBytes = str_replace(' ', '', $hexPart);
-            
-            // First check if it represents a clean printable ASCII string
-            $ascii = '';
-            $isPrintable = true;
-            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
-                $byte = hexdec(substr($hexBytes, $i, 2));
-                if ($byte < 32 || $byte > 126) {
-                    $isPrintable = false;
+    private function getPantumConsumableLevels(string $ip): array {
+        $levels = [];
+
+        // Toner cartridge — returns percentage directly (0-100)
+        $tonerPercentage = @snmp2_get($ip, $this->community, '.1.3.6.1.4.1.40093.1.1.3.13.2', $this->timeout, $this->retries);
+        if ($tonerPercentage !== false) {
+            $percentage = (int)$this->sanitizeSnmpValue($tonerPercentage);
+
+            // Validate range — some models may return -1 or other sentinel values
+            if ($percentage >= 0 && $percentage <= 100) {
+                $levels['black'] = [
+                    'percentage' => $percentage,
+                    'current' => $percentage,
+                    'max' => 100,
+                    'color' => 'black',
+                    'description' => 'Black Toner Cartridge'
+                ];
+
+                if ($percentage <= 0) {
+                    $levels['black']['status'] = 'empty_or_not_genuine';
                 }
-                $ascii .= chr($byte);
-            }
-            
-            if ($isPrintable && strlen($hexBytes) > 0) {
-                return trim($ascii);
-            }
-            
-            // If not printable ASCII, it might be an encoded integer (e.g. "00 00 00 64" = 100)
-            if (strlen($hexBytes) <= 8) {
-                return (string)hexdec($hexBytes);
-            }
-            
-            // Otherwise fallback to filtering printable characters
-            $ascii = '';
-            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
-                $byte = hexdec(substr($hexBytes, $i, 2));
-                if ($byte >= 32 && $byte <= 126) {
-                    $ascii .= chr($byte);
-                }
-            }
-            $ascii = trim($ascii);
-            return $ascii !== '' ? $ascii : 'N/A';
-        }
-
-        $clean = trim(preg_replace([
-            '/^STRING:\s*"/', 
-            '/"$/', 
-            '/^(INTEGER|Counter32|Gauge32|Timeticks):\s*/i'
-        ], '', $value));
-
-        // Decode hex numbers prefixed with 0x (common for Pantum printers)
-        if (preg_match('/^0x([0-9a-fA-F]+)$/i', $clean, $matches)) {
-            return (string)hexdec($matches[1]);
-        }
-
-        return (string)$clean;
-    }
-    
-    /**
-     * Detect Vendor
-     * 
-     * Guesses the brand based on the description text.
-     */
-    private function detectVendor(string $description): string {
-        $description = strtolower($description);
-        $vendors = [
-            'HP' => ['hp', 'hewlett', 'laserjet', 'officejet'],
-            'CANON' => ['canon', 'pixma'],
-            'EPSON' => ['epson', 'workforce'],
-            'BROTHER' => ['brother', 'mfc'],
-            'LEXMARK' => ['lexmark'],
-            'XEROX' => ['xerox', 'phaser'],
-            'KYOCERA' => ['kyocera'],
-            'RICOH' => ['ricoh'],
-            'KONICA' => ['konica', 'minolta'],
-            'SAMSUNG' => ['samsung'],
-            'TOSHIBA' => ['toshiba'],
-            'PANTUM' => ['pantum']
-        ];
-        
-        foreach ($vendors as $vendor => $keywords) {
-            foreach ($keywords as $keyword) {
-                if (stripos($description, $keyword) !== false) return $vendor;
             }
         }
-        return 'GENERIC';
+
+        return $levels;
     }
-    
-    /**
-     * Determine Color
-     * 
-     * Guesses the ink color based on the cartridge name (e.g., "Black Cartridge" -> "black").
-     */
-    private function determineColor(string $description): string {
-        $description = strtolower($description);
-        
-        if (preg_match('/\b(black|noir|negro|k)\b/i', $description)) return 'black';
-        if (preg_match('/\b(cyan|blue|c)\b/i', $description)) return 'cyan';
-        if (preg_match('/\b(magenta|pink|m)\b/i', $description)) return 'magenta';
-        if (preg_match('/\b(yellow|jaune|y)\b/i', $description)) return 'yellow';
-        
-        // Fallback: if it says "toner" but no color, assume black
-        if (strpos($description, 'toner') !== false) return 'black';
-        
-        return 'other';
-    }
-    
-    /**
+/**
      * Get Brother Consumable Levels
      * 
      * Brother printers (both inkjets like MFC-J and modern lasers like DCP-L/MFC-L)
@@ -641,5 +584,109 @@ class PrinterDiscovery {
         }
         
         return $levels;
+    }
+/**
+     * Sanitize SNMP Value
+     * 
+     * Cleans up the raw text returned by the printer (removes "STRING:", quotes, etc.)
+     */
+    private function sanitizeSnmpValue(string $value): string {
+        // Handle Hex-STRING values: convert hex bytes to ASCII or numeric integer
+        // e.g., "Hex-STRING: 48 50" → "HP", "Hex-STRING: 00 00 00 64" → "100", "Hex-STRING: 00 00 00 00" → "0"
+        if (preg_match('/^Hex-STRING:\s*/i', $value)) {
+            $hexPart = trim(preg_replace('/^Hex-STRING:\s*/i', '', $value));
+            $hexBytes = str_replace(' ', '', $hexPart);
+            
+            // First check if it represents a clean printable ASCII string
+            $ascii = '';
+            $isPrintable = true;
+            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+                $byte = hexdec(substr($hexBytes, $i, 2));
+                if ($byte < 32 || $byte > 126) {
+                    $isPrintable = false;
+                }
+                $ascii .= chr($byte);
+            }
+            
+            if ($isPrintable && strlen($hexBytes) > 0) {
+                return trim($ascii);
+            }
+            
+            // If not printable ASCII, it might be an encoded integer (e.g. "00 00 00 64" = 100)
+            if (strlen($hexBytes) <= 8) {
+                return (string)hexdec($hexBytes);
+            }
+            
+            // Otherwise fallback to filtering printable characters
+            $ascii = '';
+            for ($i = 0; $i < strlen($hexBytes); $i += 2) {
+                $byte = hexdec(substr($hexBytes, $i, 2));
+                if ($byte >= 32 && $byte <= 126) {
+                    $ascii .= chr($byte);
+                }
+            }
+            $ascii = trim($ascii);
+            return $ascii !== '' ? $ascii : 'N/A';
+        }
+
+        $clean = trim(preg_replace([
+            '/^STRING:\s*"/', 
+            '/"$/', 
+            '/^(INTEGER|Counter32|Gauge32|Timeticks):\s*/i'
+        ], '', $value));
+
+        // Decode hex numbers prefixed with 0x (common for Pantum printers)
+        if (preg_match('/^0x([0-9a-fA-F]+)$/i', $clean, $matches)) {
+            return (string)hexdec($matches[1]);
+        }
+
+        return (string)$clean;
+    }
+/**
+     * Detect Vendor
+     * 
+     * Guesses the brand based on the description text.
+     */
+    private function detectVendor(string $description): string {
+        $description = strtolower($description);
+        $vendors = [
+            'HP' => ['hp', 'hewlett', 'laserjet', 'officejet'],
+            'CANON' => ['canon', 'pixma'],
+            'EPSON' => ['epson', 'workforce'],
+            'BROTHER' => ['brother', 'mfc'],
+            'LEXMARK' => ['lexmark'],
+            'XEROX' => ['xerox', 'phaser'],
+            'KYOCERA' => ['kyocera'],
+            'RICOH' => ['ricoh'],
+            'KONICA' => ['konica', 'minolta'],
+            'SAMSUNG' => ['samsung'],
+            'TOSHIBA' => ['toshiba'],
+            'PANTUM' => ['pantum']
+        ];
+        
+        foreach ($vendors as $vendor => $keywords) {
+            foreach ($keywords as $keyword) {
+                if (stripos($description, $keyword) !== false) return $vendor;
+            }
+        }
+        return 'GENERIC';
+    }
+/**
+     * Determine Color
+     * 
+     * Guesses the ink color based on the cartridge name (e.g., "Black Cartridge" -> "black").
+     */
+    private function determineColor(string $description): string {
+        $description = strtolower($description);
+        
+        if (preg_match('/\b(black|noir|negro|k)\b/i', $description)) return 'black';
+        if (preg_match('/\b(cyan|blue|c)\b/i', $description)) return 'cyan';
+        if (preg_match('/\b(magenta|pink|m)\b/i', $description)) return 'magenta';
+        if (preg_match('/\b(yellow|jaune|y)\b/i', $description)) return 'yellow';
+        
+        // Fallback: if it says "toner" but no color, assume black
+        if (strpos($description, 'toner') !== false) return 'black';
+        
+        return 'other';
     }
 }

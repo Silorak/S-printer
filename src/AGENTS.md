@@ -24,6 +24,11 @@ This document owns these files and their runtime contracts:
 ### PHP and API
 
 - PHP source files must use `declare(strict_types=1);`.
+- Entry-point files (`index.php`, `api.php`) must layer in this order: `declare` → error config → HTTP headers → `require_once` includes → constants → helper functions → fail-fast guards (auth/CSRF/validation) → main logic → response. Fail fast, fail early.
+- Library files with global constants (`Auth.php`) must group all constants at the top of the file, before any function definitions. Constants must not be scattered between functions.
+- Class files (`Database.php`, `PrinterDiscovery.php`) must layer methods: public API methods first, then private query helpers, then vendor-specific handlers near their callers, then leaf utility methods (sanitizers, detectors) at the bottom. Private helpers must not be sandwiched between public CRUD methods.
+- `Database.php` uses three private query helpers (`run()`, `fetchAll()`, `fetchOne()`) that wrap the try/prepare/execute/catch pattern. All CRUD methods must use these helpers — no inline `try/catch(PDOException)` in CRUD methods. Only the constructor, `initSchema()`, `createFirstAdminAtomic()` (transaction), and `recordFailedLogin()` (bindValue) may have inline try/catch.
+- User INSERT SQL is shared between `createFirstAdminAtomic()` and `createUser()` via `userInsertSql()` + `userInsertParams()` helpers to avoid SQL duplication.
 - Do not introduce a Composer/autoloader dependency without updating Docker/runtime docs and verification.
 - `api.php` is JSON-only. It must not emit HTML.
 - API responses must preserve the envelope shape:
@@ -52,6 +57,7 @@ This document owns these files and their runtime contracts:
   - `get_users`
   - `create_user`
   - `update_user_permissions`
+  - `change_own_password`
 - Permission mapping:
   - `check_ip`, `add_printer` require `can_add_printer`
   - `edit_printer` requires `can_edit_printer`
@@ -60,6 +66,7 @@ This document owns these files and their runtime contracts:
   - `save_settings` requires `can_manage_settings`
   - `import_printers`, `export_printers` require `can_import_export`
   - user-management actions require main-admin-only `can_manage_users`
+  - `change_own_password` is available to the currently authenticated active user after CSRF validation and must verify the current password before replacing the hash
 - Use PDO prepared statements for all untrusted database input.
 - Keep `Database::initSchema()` idempotent. Existing installs may run it repeatedly.
 - Settings keys are an allowlist. Current supported keys are `hide_ip` and `show_serial`.
@@ -78,7 +85,12 @@ The live schema is initialized in `Database.php` and currently includes:
 Durable schema contracts:
 
 - `users.password_hash` stores PHP `password_hash()` output only; never store plain text or reversible passwords.
-- The first account is the persistent main admin (`is_admin = 1`) and always has every permission. Do not add UI/API paths that demote or disable the main admin.
+-- First-admin registration is atomic: `Database::createFirstAdminAtomic()` uses `SELECT ... FOR UPDATE` inside a transaction to prevent TOCTOU race conditions during the first-run window.
+- `Database::getUsers()` must never select `password_hash`; use an explicit column list.
+- API responses include `Cache-Control: no-store, no-cache, must-revalidate` and `X-Content-Type-Options: nosniff`.
+- The API outer exception handler catches `Throwable`, not just `Exception`.
+- Cache file writes use `LOCK_EX`; cache directory permissions are `0775`.
+- Import error paths log details server-side and return generic messages (OWASP pattern).
 - Basic users default to view-only. Main admin grants printer/floor/settings/import-export permissions explicitly.
 - `printers.ip` is unique and supports IPv4/IPv6 via `VARCHAR(45)`.
 - `printers.floor_id` references `floors.id` and uses `ON DELETE SET NULL` on newly initialized schemas.
@@ -97,6 +109,7 @@ Durable schema contracts:
   - `-3` means level is above threshold / OK; render as `status: "ok"` at 100%.
   - `-2` means unknown; skip that supply.
   - level `<= 0` means `status: "empty_or_not_genuine"`.
+- Pantum printers use proprietary enterprise OIDs (.1.3.6.1.4.1.40093): toner percentage at `.1.3.6.1.4.1.40093.1.1.3.13.2`, serial at `.1.3.6.1.4.1.40093.1.1.1.5`. The `getPantumConsumableLevels()` method handles these before falling back to the generic MIB walk.
 - `PrinterDiscovery::getPrinterData()` must keep returning:
   - `info.status`: `loading`, `online`, or `offline`
   - `info.last_levels`: last DB JSON string or null
@@ -108,29 +121,36 @@ Durable schema contracts:
 ### Browser/DOM contracts
 
 - `script.js` relies on IDs and classes emitted by `index.php`. Rename only when updating PHP, JS, and CSS together.
-- `window.__SPRINTER_BOOTSTRAP__` includes `csrfToken`, `currentUser`, and `currentPermissions`; keep those fields stable for `apiFetch()` and permission-gated UI.
+- `index.php` emits bootstrap data as inert JSON in `#sprinterBootstrap`; `script.js` parses it and populates `window.__SPRINTER_BOOTSTRAP__` with `csrfToken`, `currentUser`, and `currentPermissions` for `apiFetch()` and permission-gated UI.
 - `script.js::hasPermission()` gates browser affordances only. Server-side `sprinterRequirePermission()` remains authoritative.
 - Important IDs/classes/data attributes include:
   - `printerModal`, `addPrinterBtn`, `printerForm`, `printerIp`, `checkIpBtn`
   - `settingsModal`, `settingsBtn`, `floorList`, `refreshDataBtn`, `lastRefreshTime`
-  - `logoutForm`, `usersTab`, `userCreateForm`, `userList`, `.user-row`, `[data-permission]`
+  - `accountMenu`, `accountMenuBtn`, `accountDropdown`, `togglePasswordChange`, `changePasswordForm`, `logoutForm`
+  - `usersTab`, `userCreateForm`, `userList`, `.user-row`, `[data-permission]`
   - `.cube`, `data-id`, `data-ip`, `data-floor-id`
   - `.status-indicator`, `.printer-name`, `.printer-serial`, `.levels-section`, `.edit-btn`
   - `.levels-section[data-initial-status][data-initial-levels][data-initial-last-levels]`
-- `openEditModal()` and `deletePrinter()` are called from inline `onclick` handlers in `index.php`; they must remain global unless inline handlers are removed and event listeners replace them.
+- Printer card edit/delete actions use `data-action` attributes and delegated event listeners in `script.js::setupPrinterActions()`; do not reintroduce inline event-handler attributes.
 - Level rendering is JS-owned: `index.php` emits card shells plus JSON data attributes, and `script.js::renderLevelsSection(levelsSection, status, levels, lastLevels)` renders DOM nodes with `textContent`/DOM APIs.
 - The JS level renderer computes stable signatures and keyed level bars (`data-level-key`) so unchanged sections can be skipped and existing bars can be reused.
-- `index.php` bootstraps settings/floors through `window.__SPRINTER_BOOTSTRAP__`; `script.js` should only fetch those APIs on bootstrap fallback.
+- `index.php` bootstraps settings/floors through inert JSON; `script.js` should only fetch those APIs on bootstrap fallback.
 - `index.php` renders first-admin registration when `!$db->hasUsers()`, renders login when a user exists but the session is unauthenticated, and renders the dashboard only for active authenticated users.
+- Header controls must stay immediately interactive after login: bind theme, account, and settings handlers before awaited bootstrap/API fallback work in `DOMContentLoaded`.
 - Settings tabs are permission-gated: floors, display settings, and users may not all exist for every account.
 - `script.js` throttles all-printer refreshes with `throttlePromises(tasks, 4)`; preserve bounded concurrency for large printer lists.
 - `script.js` uses `AbortController` plus per-card `WeakMap` refresh tokens to cancel stale refresh work without stale cleanup corrupting newer card state.
 - Refresh ordering should prioritize active-floor / visible cards before background cards.
 - Search and floor filtering share `.cube` visibility state. Test both features together after DOM/layout changes.
+- After each full refresh, cubes are auto-sorted by lowest supply level (lowest cartridge percentage first). Offline/no-data cubes sort to the end. The sort is skipped when search text is active (search relevance wins). Before sorting, any leftover CSS `order` values from search/filter are cleared so DOM order is visually authoritative — per the CSS Flexbox spec, `order` overrides source/DOM order, so both mechanisms cannot coexist without explicit cleanup.
+- Modals use `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and a focus trap (`trapFocus()`) that cycles Tab, closes on Escape, and returns focus to the trigger button on close.
+- Level bars expose `role="progressbar"` with `aria-valuenow`, `aria-valuemin`, `aria-valuemax`, and `aria-label` so screen readers announce supply levels.
+- Status indicators use `role="img"` with `aria-label` so color-only status is accessible.
 
 ### Security and escaping
 
 - Use `Auth.php` helpers for all auth/session work. Do not call `session_start()`, `password_hash()`, `password_verify()`, or raw CSRF comparisons from scattered code unless the helper contract is intentionally being changed.
+- Brute-force protection: login uses per-account failed-attempt tracking with exponential lockout (5 attempts → 15s lock, doubling each failure, capped at 1h). A dummy `password_verify` runs for nonexistent usernames to prevent timing-based enumeration. `Database::recordFailedLogin()`, `resetFailedLogin()`, and `isUserLocked()` manage the lockout state.
 - Session cookies must stay HttpOnly and SameSite=Lax. Preserve `session_regenerate_id(true)` after successful registration/login.
 - Passwords must be validated before hashing and verified only with PHP's password API.
 - CSRF tokens must be generated with `random_bytes()` and compared with `hash_equals()`.
@@ -141,7 +161,7 @@ Durable schema contracts:
 - Validate IP addresses server-side; browser `pattern` attributes are not sufficient.
 - Validate `purchase_url` server-side before storing or rendering; restrict to safe schemes when this area is touched.
 - Destructive browser actions should ask for confirmation before calling delete APIs.
-- Keep CSP changes coordinated with inline event handlers and inline `style` attributes.
+- CSP script policy should not require `'unsafe-inline'`; use inert JSON bootstrap data and delegated event listeners instead of inline scripts or inline event-handler attributes.
 - Do not expose detailed DB/SNMP stack errors to API clients; log server-side details instead.
 
 ### Cache

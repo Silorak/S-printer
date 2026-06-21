@@ -414,7 +414,7 @@ All user-controlled data rendered in HTML is escaped:
 <?= htmlspecialchars($data['info']['full_name'] ?? 'N/A') ?>
 
 <!-- For attributes with JSON data -->
-onclick="openEditModal(<?= htmlspecialchars(json_encode($data['info'])) ?>)"
+data-printer-info="<?= jsonForHtmlAttribute($data['info']) ?>"
 ```
 
 ---
@@ -633,7 +633,7 @@ X-XSS-Protection: 1; mode=block     — Legacy XSS filter
 Referrer-Policy: same-origin         — Limits referrer leakage
 Content-Security-Policy:             — Controls resource loading:
   default-src 'self';                  Only same-origin resources
-  script-src 'self' 'unsafe-inline';   Scripts from same origin
+  script-src 'self';                   Scripts from same origin only; no inline scripts
   style-src 'self' 'unsafe-inline';    Styles from same origin
   img-src 'self' data:;               Images + data URIs
   connect-src 'self'                   AJAX to same origin only

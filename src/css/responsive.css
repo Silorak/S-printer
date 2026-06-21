@@ -663,3 +663,40 @@
         padding: 1rem;
     }
 }
+
+/* ==================== REDUCED MOTION ==================== */
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .cube:hover {
+        transform: none;
+    }
+
+    .cube.loading-state::after,
+    .cube.loading-state .spinner {
+        animation: none !important;
+    }
+
+    .spinner,
+    .spinner-large,
+    .status-indicator.loading {
+        animation: none !important;
+    }
+
+    .level-fill {
+        transition: none !important;
+        animation: none !important;
+    }
+
+    .cube.visible-by-filter {
+        animation: none !important;
+    }
+}

@@ -9,6 +9,20 @@ let isRefreshingAllPrinters = false;
 let activeRefreshController = null;
 const activeCardRefreshTokens = new WeakMap();
 
+function loadBootstrapData() {
+    const bootstrapElement = document.getElementById('sprinterBootstrap');
+    if (!bootstrapElement) return {};
+
+    try {
+        const parsed = JSON.parse(bootstrapElement.textContent || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+window.__SPRINTER_BOOTSTRAP__ = loadBootstrapData();
+
 function getAuthState() {
     const bootstrap = window.__SPRINTER_BOOTSTRAP__ || {};
     return bootstrap.auth || {
@@ -31,6 +45,17 @@ function apiFetch(url, options = {}) {
     }
     headers.set('X-CSRF-Token', getAuthState().csrfToken || '');
     return fetch(url, { ...options, headers });
+}
+
+function setCsrfToken(token) {
+    if (!token) return;
+    window.__SPRINTER_BOOTSTRAP__ = window.__SPRINTER_BOOTSTRAP__ || {};
+    window.__SPRINTER_BOOTSTRAP__.csrfToken = token;
+    window.__SPRINTER_BOOTSTRAP__.auth = window.__SPRINTER_BOOTSTRAP__.auth || {};
+    window.__SPRINTER_BOOTSTRAP__.auth.csrfToken = token;
+    document.querySelectorAll('input[name="csrf_token"]').forEach(input => {
+        input.value = token;
+    });
 }
 
 function getActiveFloorId() {
@@ -120,14 +145,16 @@ function createFloorListItem(id, name) {
  * Uses server bootstrap data first, then hydrates JS-owned level sections.
  */
 document.addEventListener('DOMContentLoaded', async function () {
+    // Wire critical header controls before any awaited initialization so visible controls are immediately clickable.
+    setupThemeToggle();
+    setupAccountMenu();
+    setupSettings();
+
     // Use server bootstrap data first; fall back to API only when bootstrap is missing.
     await initializeAppData();
 
     // JS owns initial level rendering so PHP and JS templates cannot drift.
     hydrateInitialLevelSections();
-
-    // Theme switching
-    setupThemeToggle();
 
     // Search functionality
     setupSearch();
@@ -138,11 +165,11 @@ document.addEventListener('DOMContentLoaded', async function () {
     // Import/Export functionality
     setupImportExport();
 
+    // Delegated printer card actions
+    setupPrinterActions();
+
     // Form submission
     setupForm();
-
-    // Settings modal
-    setupSettings();
 
     // Floor filter sidebar
     setupFloorFilter();
@@ -191,6 +218,84 @@ function setupThemeToggle() {
             detail: { theme: isLightTheme ? 'light' : 'dark' }
         }));
     });
+}
+
+function setupAccountMenu() {
+    const accountMenu = document.getElementById('accountMenu');
+    const accountButton = document.getElementById('accountMenuBtn');
+    const accountDropdown = document.getElementById('accountDropdown');
+    const togglePasswordBtn = document.getElementById('togglePasswordChange');
+    const changePasswordForm = document.getElementById('changePasswordForm');
+    const passwordStatus = document.getElementById('accountPasswordStatus');
+
+    if (!accountMenu || !accountButton || !accountDropdown) return;
+
+    const setOpen = (open) => {
+        accountDropdown.hidden = !open;
+        accountButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+    };
+
+    accountButton.addEventListener('click', function (event) {
+        event.stopPropagation();
+        setOpen(accountDropdown.hidden);
+    });
+
+    accountDropdown.addEventListener('click', function (event) {
+        event.stopPropagation();
+    });
+
+    document.addEventListener('click', function () {
+        setOpen(false);
+    });
+
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') setOpen(false);
+    });
+
+    if (togglePasswordBtn && changePasswordForm) {
+        togglePasswordBtn.addEventListener('click', function () {
+            changePasswordForm.hidden = !changePasswordForm.hidden;
+            if (!changePasswordForm.hidden) {
+                changePasswordForm.querySelector('input')?.focus();
+            }
+        });
+    }
+
+    if (changePasswordForm) {
+        changePasswordForm.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const formData = new FormData(changePasswordForm);
+            const payload = Object.fromEntries(formData.entries());
+            if (passwordStatus) {
+                passwordStatus.textContent = 'Saving...';
+                passwordStatus.className = 'account-status';
+            }
+
+            try {
+                const response = await apiFetch('api.php?action=change_own_password', {
+                    method: 'POST',
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (result.success) {
+                    setCsrfToken(result.data?.csrfToken);
+                    changePasswordForm.reset();
+                    if (passwordStatus) {
+                        passwordStatus.textContent = 'Password changed.';
+                        passwordStatus.className = 'account-status success';
+                    }
+                } else if (passwordStatus) {
+                    passwordStatus.textContent = result.error || 'Could not change password.';
+                    passwordStatus.className = 'account-status error';
+                }
+            } catch (e) {
+                if (passwordStatus) {
+                    passwordStatus.textContent = 'Network error';
+                    passwordStatus.className = 'account-status error';
+                }
+            }
+        });
+    }
 }
 
 /**
@@ -315,20 +420,23 @@ function setupModal() {
             resetForm(); // Clear and reset the form fields
             document.getElementById('modalTitle').textContent = 'Add Printer'; // Set modal title
             PrinterModal.classList.add('show'); // Show the modal
+            trapFocus(PrinterModal);
         };
     }
 
     // Close modal when the 'x' button is clicked
     CloseModalBtn.onclick = function () {
         PrinterModal.classList.remove('show'); // Hide the modal
+        if (activeModalTrap) activeModalTrap.deactivate();
     }
 
     // Close modal if user clicks outside of the modal content
-    window.onclick = function (event) {
+    window.addEventListener('click', function (event) {
         if (event.target == PrinterModal) {
             PrinterModal.classList.remove('show'); // Hide the modal
+            if (activeModalTrap) activeModalTrap.deactivate();
         }
-    }
+    });
 
     // Attach event listener for the 'Check IP' button
     const checkIpBtn = document.getElementById('checkIpBtn');
@@ -513,6 +621,32 @@ async function deletePrinter(id) {
     }
 }
 
+function setupPrinterActions() {
+    const dashboardContainer = document.querySelector('.main-layout');
+    if (!dashboardContainer) return;
+
+    dashboardContainer.addEventListener('click', function (event) {
+        const actionButton = event.target.closest('[data-action]');
+        if (!actionButton || !dashboardContainer.contains(actionButton)) return;
+
+        const action = actionButton.dataset.action;
+        if (action === 'delete-printer') {
+            const id = Number(actionButton.dataset.printerId || 0);
+            if (Number.isInteger(id) && id > 0) {
+                deletePrinter(id);
+            }
+            return;
+        }
+
+        if (action === 'edit-printer') {
+            const printerInfo = parseJsonDataAttribute(actionButton, 'printerInfo', null);
+            if (printerInfo && typeof printerInfo === 'object') {
+                openEditModal(printerInfo);
+            }
+        }
+    });
+}
+
 /**
  * Sets up import/export functionality for printer data backup.
  * Export includes printers, floors, and settings.
@@ -646,12 +780,14 @@ function setupSettings() {
     // Open settings modal
     settingsBtn.onclick = function () {
         settingsModal.classList.add('show');
+        trapFocus(settingsModal);
     };
 
     // Close settings modal (no reload - use Save buttons)
     if (closeSettingsBtn) {
         closeSettingsBtn.onclick = function () {
             settingsModal.classList.remove('show');
+            if (activeModalTrap) activeModalTrap.deactivate();
         };
     }
 
@@ -659,6 +795,7 @@ function setupSettings() {
     window.addEventListener('click', function (event) {
         if (event.target === settingsModal) {
             settingsModal.classList.remove('show');
+            if (activeModalTrap) activeModalTrap.deactivate();
         }
     });
 
@@ -1181,10 +1318,15 @@ function updateLevelBar(levelBar, color, level = {}, faded = false) {
     fill.dataset.level = String(barWidth);
     fill.style.width = `${barWidth}%`;
 
-    if (level.current !== undefined && level.max !== undefined) {
-        fill.setAttribute('aria-label', `${level.current}/${level.max}`);
-    } else {
-        fill.removeAttribute('aria-label');
+    // Accessible progressbar semantics.
+    const container = levelBar.querySelector('.level-container');
+    if (container) {
+        container.setAttribute('role', 'progressbar');
+        container.setAttribute('aria-valuemin', '0');
+        container.setAttribute('aria-valuemax', '100');
+        container.setAttribute('aria-valuenow', String(Math.round(barWidth)));
+        const labelText = `${capitalizeFirstLetter(String(color))}: ${displayPercentage}`;
+        container.setAttribute('aria-label', labelText);
     }
 }
 
@@ -1354,6 +1496,122 @@ function sortCubesForRefresh(cubes) {
 }
 
 /**
+ * Returns the lowest supply percentage from a cube, for auto-sorting.
+ * Cubes with no level data return Infinity so they sort to the end.
+ * @param {HTMLElement} cube - The printer card element
+ * @returns {number}
+ */
+function getCubeLowestLevel(cube) {
+    const minLevel = cube.dataset.minLevel;
+    if (minLevel === '' || minLevel === undefined) return Infinity;
+    const parsed = parseFloat(minLevel);
+    return Number.isFinite(parsed) ? parsed : Infinity;
+}
+
+/**
+ * Reorders printer cards in the DOM by lowest supply level first.
+ * Offline/no-data cards go to the end. Called after refresh-all completes.
+ * Skips if the search box has active text — search relevance sorting takes priority.
+ * Clears any CSS `order` styles left by search so DOM order is visually authoritative.
+ * @returns {void}
+ */
+function sortCubesByLowestLevel() {
+    const container = document.querySelector('.container');
+    if (!container) return;
+
+    // Don't re-sort while search is active — search sets CSS `order` which
+    // overrides DOM order (CSS Flexbox spec: visual order is independent of source order).
+    const searchInput = document.getElementById('printerSearch');
+    if (searchInput && searchInput.value.trim() !== '') return;
+
+    const cubes = Array.from(container.querySelectorAll('.cube:not(.no-results):not(.floor-empty-state)'));
+    if (cubes.length <= 1) return;
+
+    // Clear any leftover CSS `order` from previous search/floor-filter operations.
+    cubes.forEach(cube => { cube.style.order = ''; });
+
+    const sorted = cubes.sort((a, b) => getCubeLowestLevel(a) - getCubeLowestLevel(b));
+    sorted.forEach(cube => container.appendChild(cube));
+}
+
+// ==================== MODAL FOCUS MANAGEMENT ====================
+
+let activeModalTrap = null;
+
+/**
+ * Activates a focus trap on a modal element.
+ * Saves the previously focused element, focuses the modal,
+ * and intercepts Tab to cycle within the modal.
+ * @param {HTMLElement} modal - The modal element to trap focus in
+ * @returns {void}
+ */
+function trapFocus(modal) {
+    if (activeModalTrap) {
+        activeModalTrap.deactivate();
+    }
+
+    const previouslyFocused = document.activeElement;
+
+    const getFocusable = () => modal.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+
+    const focusFirst = () => {
+        const focusable = getFocusable();
+        if (focusable.length > 0) {
+            focusable[0].focus();
+        } else {
+            modal.focus();
+        }
+    };
+
+    // Defer focus so the modal is visible first.
+    requestAnimationFrame(focusFirst);
+
+    const onKeyDown = (e) => {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            modal.classList.remove('show');
+            return;
+        }
+
+        if (e.key !== 'Tab') return;
+
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+            if (document.activeElement === first || !modal.contains(document.activeElement)) {
+                e.preventDefault();
+                last.focus();
+            }
+        } else {
+            if (document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
+    };
+
+    modal.addEventListener('keydown', onKeyDown);
+
+    activeModalTrap = {
+        deactivate() {
+            modal.removeEventListener('keydown', onKeyDown);
+            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+                previouslyFocused.focus();
+            }
+            if (activeModalTrap === this) {
+                activeModalTrap = null;
+            }
+        }
+    };
+}
+
+/**
  * Refreshes a single printer card's live data in the background.
  * @async
  * @param {HTMLElement} cube - The printer card element
@@ -1381,6 +1639,7 @@ async function refreshPrinterCard(cube, signal) {
             const indicator = cube.querySelector('.status-indicator');
             if (indicator) {
                 indicator.className = `status-indicator ${status}`;
+                indicator.setAttribute('aria-label', `Status: ${capitalizeFirstLetter(status)}`);
             }
             if (status === 'offline') {
                 cube.classList.add('offline-cube');
@@ -1435,10 +1694,12 @@ async function refreshPrinterCard(cube, signal) {
             
             const editBtn = cube.querySelector('.edit-btn');
             if (editBtn) {
-                editBtn.onclick = function() {
-                    openEditModal(fullInfo);
-                };
+                editBtn.dataset.printerInfo = JSON.stringify(fullInfo);
             }
+
+            // 7. Store lowest level for auto-sorting
+            const levelPercentages = Object.values(levels).map(l => Number(l.percentage ?? 100));
+            cube.dataset.minLevel = levelPercentages.length > 0 ? String(Math.min(...levelPercentages)) : '';
         } else {
             // Handle error or set to offline
             const indicator = cube.querySelector('.status-indicator');
@@ -1517,6 +1778,9 @@ async function refreshAllPrinters() {
 
         // Wait for all to complete using the high-performance Promise Throttle Pool
         await throttlePromises(tasks, 4);
+
+        // Auto-sort cubes by lowest toner/ink level so urgent printers are first.
+        sortCubesByLowestLevel();
 
         // Update the last updated time
         const lastRefreshTime = document.getElementById('lastRefreshTime');

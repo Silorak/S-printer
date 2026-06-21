@@ -149,25 +149,37 @@ h1 {
     -webkit-text-fill-color: #5c6a72 !important;
 }
 
-/* Premium Keyboard Focus Rings for Accessibility */
+/* Keyboard focus rings: compact on text fields, more visible on controls. */
 button:focus-visible,
 a:focus-visible,
+.floor-item:focus-visible,
+.settings-nav-item:focus-visible,
+.account-button:focus-visible,
+.account-menu-row:focus-visible {
+    outline: 2px solid var(--primary) !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 2px rgba(127, 187, 179, 0.2) !important;
+}
+
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible,
-.floor-item:focus-visible,
-.settings-nav-item:focus-visible {
-    outline: 2px solid var(--primary) !important;
-    outline-offset: 3px !important;
-    box-shadow: 0 0 0 4px rgba(127, 187, 179, 0.25) !important;
+textarea:focus-visible {
+    outline: none !important;
+    border-color: var(--primary) !important;
+    box-shadow: 0 0 0 1px rgba(127, 187, 179, 0.28) !important;
 }
 
 .light-theme button:focus-visible,
 .light-theme a:focus-visible,
+.light-theme .floor-item:focus-visible,
+.light-theme .settings-nav-item:focus-visible,
+.light-theme .account-button:focus-visible,
+.light-theme .account-menu-row:focus-visible {
+    box-shadow: 0 0 0 2px rgba(141, 161, 1, 0.22) !important;
+}
+
 .light-theme input:focus-visible,
 .light-theme select:focus-visible,
-.light-theme textarea:focus-visible,
-.light-theme .floor-item:focus-visible,
-.light-theme .settings-nav-item:focus-visible {
-    box-shadow: 0 0 0 4px rgba(141, 161, 1, 0.25) !important;
+.light-theme textarea:focus-visible {
+    box-shadow: 0 0 0 1px rgba(141, 161, 1, 0.28) !important;
 }

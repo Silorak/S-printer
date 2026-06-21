@@ -11,6 +11,8 @@ ini_set('display_errors', '0'); // Don't show errors to the user, just log them
 
 // Set the content type to JSON so the browser knows we are sending data
 header('Content-Type: application/json');
+header('Cache-Control: no-store, no-cache, must-revalidate');
+header('X-Content-Type-Options: nosniff');
 
 require_once 'PrinterDiscovery.php';
 require_once 'Database.php';
@@ -475,7 +477,8 @@ try {
             } catch (Exception $e) {
                 // Roll back any changes if something goes wrong
                 $db->rollBack();
-                sendError('Import failed: ' . $e->getMessage());
+                error_log('Import failed: ' . $e->getMessage());
+                sendError('Import failed. Check server logs for details.');
             }
 
             sendResponse([
@@ -677,10 +680,35 @@ try {
             sendResponse(['users' => sprinterPublicUsers($db->getUsers())]);
             break;
 
+        case 'change_own_password':
+            requirePost();
+            $input = inputObjectOrFail($input);
+            $currentPassword = (string)($input['current_password'] ?? '');
+            $newPassword = (string)($input['new_password'] ?? '');
+
+            if (!password_verify($currentPassword, (string)$currentUser['password_hash'])) {
+                sendError('Current password is incorrect', 403);
+            }
+
+            $passwordError = sprinterValidatePassword($newPassword);
+            if ($passwordError !== null) {
+                sendError($passwordError);
+            }
+
+            if (!$db->updateUserPasswordHash((int)$currentUser['id'], sprinterHashPassword($newPassword))) {
+                error_log('Change own password failed: ' . $db->getLastError());
+                sendError('Failed to change password');
+            }
+
+            session_regenerate_id(true);
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            sendResponse(['csrfToken' => sprinterCsrfToken()]);
+            break;
+
         default:
             sendError('Invalid action');
     }
-} catch (Exception $e) {
+} catch (Throwable $e) {
     // Log detailed error server-side, return generic message (OWASP)
     error_log('API error: ' . $e->getMessage());
     sendError('An unexpected error occurred');

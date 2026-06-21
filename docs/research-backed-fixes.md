@@ -274,8 +274,11 @@ Implemented in this pass:
 - The authenticated dashboard bootstraps `csrfToken`, `currentUser`, and `currentPermissions` for the browser.
 - `api.php` requires an authenticated active user for all API actions, validates `X-CSRF-Token`, and enforces deny-by-default per-action permissions.
 - Main admin can create basic users and toggle permissions in the Settings → Users UI. Basic users are view-only unless permissions are granted.
-- `script.js` now routes API calls through `apiFetch()` so the CSRF token is sent consistently, and it gates UI affordances with `hasPermission()` while leaving server checks authoritative.
-- `src/css/modals.css` now styles first-run/login auth screens and user-management controls.
+- Authenticated users now have a compact profile/account dropdown with username, role badge, logout, and own-password change.
+- `api.php?action=change_own_password` verifies the current password, validates the new password, updates the hash, regenerates the PHP session ID, and returns a rotated CSRF token.
+- `script.js` now routes API calls through `apiFetch()` so the CSRF token is sent consistently, gates UI affordances with `hasPermission()`, updates bootstrapped and hidden-form CSRF tokens after password rotation, and wires header controls before awaited bootstrap fallback so visible controls are immediately interactive after login.
+- `src/css/modals.css` now styles first-run/login auth screens and user-management controls; `src/css/components.css` styles the account dropdown and role badge.
+- `src/css/base.css` now uses compact focus treatment for text fields while preserving visible keyboard focus on controls.
 - `tools/verify-phase4-auth.mjs` verifies the auth/session/password/CSRF/schema/API/UI/documentation contracts and runs Phase 3 regression checks.
 
 Validation target:
@@ -290,7 +293,155 @@ Browser/runtime checks still needed with PHP/Docker available:
 
 - first-run main-admin registration
 - logout/login
+- immediately click settings/theme/account/logout after login, before background refresh finishes
+- change own password from the account dropdown, then confirm subsequent API calls still pass CSRF
 - Docker restart with existing `users` table showing login, not registration
 - create basic view-only user
 - toggle add/edit/delete/floor/settings/import-export permissions and confirm denied actions stay hidden and API-denied
+
+## Phase 5 status — CSP script hardening
+
+Implemented in this pass:
+
+- `index.php` now emits dashboard bootstrap data as inert `<script id="sprinterBootstrap" type="application/json">` JSON instead of executable inline JavaScript.
+- `script.js` now parses `#sprinterBootstrap`, populates the existing `window.__SPRINTER_BOOTSTRAP__` contract, and still uses `apiFetch()` for CSRF-aware API calls.
+- Printer edit/delete card controls now use `data-action`, `data-printer-id`, and `data-printer-info` with delegated `setupPrinterActions()` listeners instead of inline `onclick` attributes.
+- The database-loading page no longer injects inline script/style; it relies on the existing HTTP `Refresh` header and `.db-loading-page` CSS.
+- The import file input now uses `.visually-hidden` instead of an inline `style` attribute.
+- PHP and Apache CSP headers now use `script-src 'self'` without `script-src 'unsafe-inline'`. `style-src 'unsafe-inline'` remains until remaining style needs are fully audited.
+- `tools/verify-phase5-csp.mjs` verifies the CSP/no-inline-script contracts and runs Phase 4 regression checks.
+
+Validation target:
+
+```sh
+node tools/verify-phase5-csp.mjs
+node --check src/script.js
+php -l src/index.php src/Auth.php
+```
+
+Browser/runtime checks still needed with PHP/Docker available:
+
+- first-run registration/login still receives the auth page CSS correctly under the tighter script CSP
+- authenticated dashboard loads bootstrap data from `#sprinterBootstrap`
+- edit/delete printer buttons still work through delegated listeners
+- DB startup loading page still refreshes via the `Refresh` header
+
+## Phase 6 status — Accessibility and auto-sort
+
+Implemented in this pass:
+
+- Modal close controls changed from `<span>` to `<button type="button" aria-label="Close">`.
+- Both modals now declare `role="dialog"`, `aria-modal="true"`, and `aria-labelledby`.
+- A focus trap (`trapFocus()`) cycles Tab within the active modal, closes on Escape, and returns focus to the trigger button on close.
+- Status indicators use `role="img"` with `aria-label` so color-only status is accessible to screen readers.
+- Level bars expose `role="progressbar"` with `aria-valuenow`, `aria-valuemin`, `aria-valuemax`, and `aria-label`.
+- CSS `prefers-reduced-motion` media query disables animations, transitions, hover lifts, and spinner rotations for users who request reduced motion.
+- After each full refresh, cubes are auto-sorted by lowest supply level (lowest cartridge percentage first). Offline/no-data cubes sort to the end. Search relevance sorting overrides this during active search.
+- The edit button refresh path now updates `data-printer-info` instead of assigning `onclick`, keeping it consistent with Phase 5 delegated handling.
+- `tools/verify-phase6-a11y.mjs` verifies the accessibility and auto-sort contracts and runs Phase 5 regression checks.
+
+Validation target:
+
+```sh
+node tools/verify-phase6-a11y.mjs
+node --check src/script.js
+```
+
+Browser/runtime checks still needed:
+
+- Tab cycling stays inside modal and returns focus on close
+- Escape closes modals and returns focus
+- Screen reader announces status and progressbar values
+- Reduced-motion mode disables animations
+- After refresh, lowest-level printers appear first in the grid
+- Search still re-sorts by relevance; clearing search restores level order
+
+## Phase 7 status — Security hardening
+
+Implemented in this pass (backed by OWASP Authentication Cheat Sheet, PHP manual, and audit findings):
+
+- **H1 — First-admin TOCTOU race fixed:** `Database::createFirstAdminAtomic()` wraps `SELECT COUNT(*) FROM users FOR UPDATE` + INSERT inside a single transaction. Concurrent registration attempts serialize on the row lock, so only one can succeed.
+- **H2 — password_hash leak fixed:** `Database::getUsers()` now uses an explicit column list that excludes `password_hash`. Previously `SELECT *` included it (mitigated by `sprinterPublicUser()` filtering, but defense-in-depth now closes the gap at the DB layer).
+- **M2 — Import error info disclosure fixed:** `api.php` import catch block now logs `$e->getMessage()` server-side and returns a generic `'Import failed. Check server logs for details.'` to the client.
+- **M3 — API Cache-Control:** All API responses now include `Cache-Control: no-store, no-cache, must-revalidate` and `X-Content-Type-Options: nosniff`, preventing browsers/proxies from caching authenticated user/printer data.
+- **M5 — Throwable catch:** API outer exception handler now catches `Throwable` instead of `Exception`, so `TypeError`/`Error` from fatal bugs also get the clean generic-message handler instead of an unfiltered 500.
+- **M7 — Cache write locking:** `CacheManager::set()` now uses `LOCK_EX` to prevent concurrent-write file corruption.
+- **M8 — Cache dir permissions:** `CacheManager` now creates the cache directory with `0775` instead of `0777`.
+- `tools/verify-phase7-security.mjs` verifies all Phase 7 contracts and runs Phase 6 regression checks.
+
+Validation target:
+
+```sh
+node tools/verify-phase7-security.mjs
+node --check src/script.js
+php -l src/api.php src/Auth.php src/Database.php src/CacheManager.php
+```
+
+Remaining audit findings not yet addressed (medium/low priority, no immediate exploit):
+
+- No login brute-force protection / rate limiting (OWASP recommends account lockout with exponential backoff)
+- SSRF: SNMP probing accepts any IP (by-design for a LAN printer scanner, but add deny-list before non-LAN exposure)
+- Login timing oracle (username enumeration via password_verify timing)
+- No server-side idle session timeout
+- Chunked import commits break atomicity (partial import on failure)
+- `"0"` falsy-string logic bug in serial/printer name handling
+
+## Phase 8 status — Brute-force protection
+
+Implemented in this pass (backed by OWASP Authentication Cheat Sheet brute-force guidance):
+
+- **Per-account lockout:** Added `failed_attempts INT` and `locked_until TIMESTAMP NULL` columns to the `users` table (idempotent migration).
+- **Exponential backoff:** After 5 failed login attempts (`SPRINTER_MAX_LOGIN_ATTEMPTS`), the account is locked. Each subsequent failure doubles the lockout duration: 15s → 30s → 60s → 120s → 240s... capped at 1 hour (`SPRINTER_LOCKOUT_MAX_SECONDS`). Lockout is enforced via `Database::isUserLocked()` before `password_verify` runs.
+- **Timing oracle fixed:** Nonexistent usernames now trigger a dummy `password_verify()` against `SPRINTER_DUMMY_HASH`, so response time is identical whether the username exists or not. Previously, `password_verify` only ran for existing users, allowing username enumeration via timing.
+- **Auto-reset on success:** `Database::resetFailedLogin()` clears the counter and lockout immediately on valid login.
+- **DoS-resistant:** Lockout applies only to the targeted account, not globally. Password reset by admin clears the lockout (admin can reset any user's password via the Users UI). The main admin cannot be permanently locked out because lockout expiry is automatic.
+- `tools/verify-phase8-bruteforce.mjs` verifies the brute-force protection contracts and runs Phase 7 regression checks.
+
+Validation target:
+
+```sh
+node tools/verify-phase8-bruteforce.mjs
+node --check src/script.js
+php -l src/Auth.php src/Database.php
+```
+
+Browser/runtime checks needed:
+
+- Login with wrong password 5 times → 6th attempt is blocked even with correct password
+- Wait for lockout to expire → login succeeds with correct password
+- Successful login resets the counter (try 4 failures, then login, then 4 more — should not lock)
+- Nonexistent username returns same response timing as existing-but-wrong-password
+
+## Phase 9 status — Pantum printer SNMP fix
+
+Implemented in this pass (backed by research from two Pantum-specific open-source projects):
+
+Research sources:
+- `github.com/bdomitil/stat-pantum` — Go CLI that queries Pantum printers via SNMP, confirmed working with proprietary enterprise OIDs.
+- `github.com/Shikkigayafr/Pantum_M6550NW` — Zabbix template + troubleshooting guide for Pantum M6550NW, confirming standard MIB behavior and quirks.
+
+Root cause:
+- Pantum printers return toner level as a **percentage directly** (0-100) in the standard Printer-MIB supply level OID (`.1.3.6.1.2.1.43.11.1.1.9.1.1`), not as a raw current value.
+- The generic code divided this percentage by the max-capacity value, producing wrong or zero results.
+- Pantum also has a truncated SNMP agent — many standard OIDs return "No Such Object".
+
+Fix:
+- Added `getPantumConsumableLevels()` that queries the Pantum proprietary enterprise OID tree (.1.3.6.1.4.1.40093):
+  - Toner percentage: `.1.3.6.1.4.1.40093.1.1.3.13.2` (returns 0-100 directly)
+  - Serial number: `.1.3.6.1.4.1.40093.1.1.1.5` (added to serial OID fallback list)
+- Wired into `getDirectSupplyLevels()` like the Brother handler: try proprietary OIDs first, fall back to standard MIB walk if they don't respond.
+- Removed the old Pantum entry from the generic OID mapping table (it was just a copy of the standard map, which doesn't work for Pantum).
+
+Validation target:
+
+```sh
+node tools/verify-phase9-pantum.mjs
+php -l src/PrinterDiscovery.php
+```
+
+Browser/runtime checks needed with a real Pantum printer:
+
+- Add a Pantum printer by IP → toner level should show correct percentage
+- Verify serial number populates (from Pantum proprietary OID)
+- Verify the printer shows "online" when powered on
 

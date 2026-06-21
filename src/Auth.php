@@ -13,6 +13,13 @@ const SPRINTER_PERMISSIONS = [
     'can_manage_users' => 'Manage users'
 ];
 
+// Brute-force protection constants
+const SPRINTER_MAX_LOGIN_ATTEMPTS = 5;
+const SPRINTER_LOCKOUT_BASE_SECONDS = 15;
+const SPRINTER_LOCKOUT_MAX_SECONDS = 3600;
+// Pre-computed dummy hash so password_verify always runs — prevents timing-based username enumeration.
+const SPRINTER_DUMMY_HASH = '$argon2id$v=19$m=65536,t=4,p=1$Y2NjY2NjY2NjY2NjY2NjYw$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+
 function sprinterIsHttps(): bool {
     return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
@@ -183,9 +190,37 @@ function sprinterGetCurrentUser(Database $db): ?array {
 
 function sprinterLogin(Database $db, string $username, string $password): bool {
     $user = $db->getUserByUsername($username);
-    if (!$user || empty($user['is_active']) || !password_verify($password, (string)$user['password_hash'])) {
+
+    // Timing oracle mitigation: always run password_verify even for nonexistent users.
+    // This ensures response time is identical whether or not the username exists.
+    if (!$user) {
+        password_verify($password, SPRINTER_DUMMY_HASH);
         return false;
     }
+
+    // Check lockout before verifying password.
+    if (!empty($user['is_active'])) {
+        $lockedUntil = $db->isUserLocked((int)$user['id']);
+        if ($lockedUntil !== null) {
+            error_log("Login blocked: account '{$username}' is locked until {$lockedUntil}");
+            return false;
+        }
+    }
+
+    if (empty($user['is_active']) || !password_verify($password, (string)$user['password_hash'])) {
+        // Record the failed attempt and apply exponential lockout if threshold reached.
+        if (!empty($user['is_active'])) {
+            $db->recordFailedLogin(
+                (int)$user['id'],
+                SPRINTER_MAX_LOGIN_ATTEMPTS,
+                SPRINTER_LOCKOUT_BASE_SECONDS
+            );
+        }
+        return false;
+    }
+
+    // Success: reset the failed-attempt counter and clear any lockout.
+    $db->resetFailedLogin((int)$user['id']);
 
     $algo = sprinterPasswordAlgo();
     if (password_needs_rehash((string)$user['password_hash'], $algo)) {
@@ -210,19 +245,16 @@ function sprinterLogout(): void {
 }
 
 function sprinterRegisterFirstAdmin(Database $db, string $username, string $password): bool {
-    if ($db->hasUsers()) {
-        return false;
-    }
-
     $passwordError = sprinterValidatePassword($password);
     if ($passwordError !== null) {
         throw new InvalidArgumentException($passwordError);
     }
 
-    $created = $db->createUser(
+    // Atomic check-and-create: Database::createFirstAdminAtomic() uses
+    // SELECT ... FOR UPDATE inside a transaction to prevent TOCTOU race.
+    $created = $db->createFirstAdminAtomic(
         sprinterNormalizeUsername($username),
         sprinterHashPassword($password),
-        true,
         sprinterPermissionDefaults(true),
         true
     );
@@ -333,7 +365,7 @@ function sprinterRenderAuthPage(string $mode, ?string $error = null): never {
     header('Content-Type: text/html; charset=utf-8');
     header("X-Content-Type-Options: nosniff");
     header("X-Frame-Options: DENY");
-    header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
     header("Referrer-Policy: same-origin");
 
     echo <<<HTML

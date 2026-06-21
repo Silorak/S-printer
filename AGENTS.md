@@ -18,6 +18,20 @@ DOX is the AGENTS.md hierarchy used in this repository. AGENTS.md files are bind
 6. Use the nearest `AGENTS.md` as the local contract and parent docs for repo-wide rules.
 7. If docs conflict, the closer doc controls local work details, but no child doc may weaken DOX.
 
+## Pre-Build Checklist (before writing new code)
+
+Reading the DOX chain tells you what exists. This checklist prevents creating verbose, duplicated code in the first place. Run it after reading DOX, before writing any new function, method, or module.
+
+1. **Search for existing patterns.** Use `search_files` to find the pattern you're about to implement across the whole codebase (not just the target file). Duplication often lives across files.
+2. **Count instances.**
+   - **0:** New pattern. Proceed to step 3.
+   - **1-2:** Emerging. Write it, but note: if this hits 3 instances, extract.
+   - **3+:** **STOP. Extract the shared abstraction FIRST**, refactor existing instances to use it, verify nothing breaks, THEN add your code. Adding a 4th copy of a pattern is how codebases rot.
+3. **Research the best practice.** For non-trivial behavior (security, DOM semantics, DB locking, CSS ordering), check the authoritative source: OWASP cheat sheets for security, MDN/W3C for DOM/CSS, php.net for PHP, MySQL/MariaDB KB for SQL. Record the source URL and key finding.
+4. **Check abstraction level.** Too low (each method reimplements boilerplate individually) → extract a helper. Too high (one function handles 5 unrelated concerns) → split. Could a lookup table replace an if-else chain? Could an existing function do the job?
+
+Skip this checklist only for: one-line fixes, renames, documentation-only changes, or genuine one-off operations.
+
 ## Update After Editing
 
 Every meaningful change requires a DOX pass before the task is done.
@@ -152,6 +166,48 @@ For Phase 3 performance/cache/cancellation contracts, run:
 node tools/verify-phase3.mjs
 ```
 
+For Phase 5 CSP-hardening contracts, run:
+
+```sh
+node tools/verify-phase5-csp.mjs
+```
+
+For Phase 6 accessibility contracts, run:
+
+```sh
+node tools/verify-phase6-a11y.mjs
+```
+
+For Phase 7 security hardening contracts, run:
+
+```sh
+node tools/verify-phase7-security.mjs
+```
+
+For Phase 8 brute-force protection contracts, run:
+
+```sh
+node tools/verify-phase8-bruteforce.mjs
+```
+
+For Phase 9 Pantum SNMP contracts, run:
+
+```sh
+node tools/verify-phase9-pantum.mjs
+```
+
+For a dynamic security scan (requires Docker running), run:
+
+```sh
+node tools/security-scanner.mjs
+```
+
+For Phase 10 simplification contracts, run:
+
+```sh
+node tools/verify-phase10-simplify.mjs
+```
+
 For DB/schema changes, inspect the live schema:
 
 ```sh
@@ -167,3 +223,5 @@ When the user requests a durable project behavior or quality preference, record 
 ## Child DOX Index
 
 - `src/AGENTS.md` — runtime PHP, JSON API, database, SNMP, cache, server-rendered dashboard, and browser JavaScript contracts.
+- `tools/AGENTS.md` — static verification scripts (`verify-phase*.mjs`) and the dynamic OWASP security scanner (`security-scanner.mjs`).
+- `docs/AGENTS.md` — analysis documents (`project-analysis.md`, `research-backed-fixes.md`) tracking phase status and research-backed fix logs.

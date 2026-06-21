@@ -23,7 +23,7 @@ sprinterStartSecureSession();
 header("X-Content-Type-Options: nosniff");
 header("X-Frame-Options: DENY");
 header("X-XSS-Protection: 1; mode=block");
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
 header("Referrer-Policy: same-origin");
 
 // Initialize components
@@ -36,6 +36,9 @@ $discovery = new PrinterDiscovery(
 );
 
 $dbError = $db->getLastError();
+$isConnectionRefused = !empty($dbError) && (
+    strpos($dbError, 'Connection refused') !== false || strpos($dbError, 'Can\'t connect') !== false
+);
 $currentUser = null;
 $currentPermissions = sprinterPermissionDefaults(false);
 $usersForManagement = [];
@@ -132,7 +135,7 @@ header('Content-Type: text/html; charset=utf-8');
     <link rel="stylesheet" href="css/responsive.css">
     <link rel="icon" href="favicon.ico" type="image/x-icon">
 </head>
-<body>
+<body<?= $isConnectionRefused ? ' class="db-loading-page"' : '' ?>>
     <header class="header">
         <div class="logo-wrapper">
             <!-- Ink Fluid Logo replaces the static image -->
@@ -153,12 +156,45 @@ header('Content-Type: text/html; charset=utf-8');
         </div>
         <div class="header-controls">
             <?php if ($currentUser): ?>
-                <div class="user-chip" title="Signed in user">👤 <?= htmlspecialchars((string)$currentUser['username'], ENT_QUOTES, 'UTF-8') ?></div>
-                <form id="logoutForm" method="post" class="logout-form">
-                    <input type="hidden" name="auth_action" value="logout">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(sprinterCsrfToken(), ENT_QUOTES, 'UTF-8') ?>">
-                    <button type="submit" class="secondary-btn compact-btn">Logout</button>
-                </form>
+                <div class="account-menu" id="accountMenu">
+                    <button type="button" id="accountMenuBtn" class="account-button" aria-haspopup="true" aria-expanded="false" aria-controls="accountDropdown" title="Account menu">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M20 21a8 8 0 0 0-16 0"/>
+                            <circle cx="12" cy="8" r="4"/>
+                        </svg>
+                    </button>
+                    <div id="accountDropdown" class="account-dropdown" hidden>
+                        <div class="account-card-header">
+                            <div class="account-avatar" aria-hidden="true">
+                                <?= htmlspecialchars(strtoupper(substr((string)$currentUser['username'], 0, 1)), ENT_QUOTES, 'UTF-8') ?>
+                            </div>
+                            <div class="account-identity">
+                                <strong><?= htmlspecialchars((string)$currentUser['username'], ENT_QUOTES, 'UTF-8') ?></strong>
+                                <span class="account-role-badge <?= !empty($currentUser['is_admin']) ? 'admin' : 'user' ?>">
+                                    <?= !empty($currentUser['is_admin']) ? 'Admin' : 'User' ?>
+                                </span>
+                            </div>
+                        </div>
+                        <button type="button" id="togglePasswordChange" class="account-menu-row">Change password</button>
+                        <form id="changePasswordForm" class="account-password-form" hidden>
+                            <label>
+                                Current password
+                                <input type="password" name="current_password" autocomplete="current-password" required minlength="15" maxlength="1024">
+                            </label>
+                            <label>
+                                New password
+                                <input type="password" name="new_password" autocomplete="new-password" required minlength="15" maxlength="1024">
+                            </label>
+                            <button type="submit" class="primary-btn account-save-password">Save password</button>
+                            <p class="account-status" id="accountPasswordStatus" aria-live="polite"></p>
+                        </form>
+                        <form id="logoutForm" method="post" class="logout-form">
+                            <input type="hidden" name="auth_action" value="logout">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(sprinterCsrfToken(), ENT_QUOTES, 'UTF-8') ?>">
+                            <button type="submit" class="account-menu-row danger-row">Logout</button>
+                        </form>
+                    </div>
+                </div>
             <?php endif; ?>
             <?php if ($canOpenSettings): ?>
             <button id="settingsBtn" class="settings-btn" title="Settings" aria-label="Open settings">
@@ -185,8 +221,6 @@ header('Content-Type: text/html; charset=utf-8');
     
     <?php if ($dbError): ?>
         <?php
-            $isConnectionRefused = strpos($dbError, 'Connection refused') !== false || strpos($dbError, 'Can\'t connect') !== false;
-            
             if ($isConnectionRefused):
                 header("Refresh: 3"); // Auto refresh every 3 seconds
         ?>
@@ -197,12 +231,6 @@ header('Content-Type: text/html; charset=utf-8');
                     <p>Please stand by...</p>
                 </div>
             </div>
-            <script>
-                setTimeout(function() {
-                    window.location.reload();
-                }, 3000);
-            </script>
-            <style>body { overflow: hidden; }</style>
             <?php exit; // Stop rendering the rest of the page ?>
         <?php else: ?>
             <div class="error-banner">
@@ -279,7 +307,7 @@ header('Content-Type: text/html; charset=utf-8');
                 $data['info']['serial_number_display'] = cleanSerialNumberForDisplay($data['info']['serial_number'] ?? null);
                 ?>
                 <div class="cube <?= $printerStatus === 'offline' ? 'offline-cube' : '' ?> <?= $printerStatus === 'loading' ? 'loading-state' : '' ?>" data-id="<?= htmlspecialchars((string)$dbId, ENT_QUOTES, 'UTF-8') ?>" data-ip="<?= htmlspecialchars($ip, ENT_QUOTES, 'UTF-8') ?>" data-floor-id="<?= htmlspecialchars((string)($floorId ?? ''), ENT_QUOTES, 'UTF-8') ?>">
-                    <div class="status-indicator <?= $printerStatus ?>"></div>
+                    <div class="status-indicator <?= $printerStatus ?>" role="img" aria-label="Status: <?= htmlspecialchars(ucfirst($printerStatus), ENT_QUOTES, 'UTF-8') ?>"></div>
                     
 
                     <div class="info-item">
@@ -306,7 +334,7 @@ header('Content-Type: text/html; charset=utf-8');
                             <?php if ($canDeletePrinter || $canEditPrinter): ?>
                             <div class="actions-menu">
                                 <?php if ($canDeletePrinter): ?>
-                                <button class="action-btn delete-btn" onclick="deletePrinter(<?= $dbId ?>)" title="Remove Printer">
+                                <button type="button" class="action-btn delete-btn" data-action="delete-printer" data-printer-id="<?= htmlspecialchars((string)$dbId, ENT_QUOTES, 'UTF-8') ?>" title="Remove Printer" aria-label="Remove Printer">
                                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <polyline points="3 6 5 6 21 6"></polyline>
                                         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -314,7 +342,7 @@ header('Content-Type: text/html; charset=utf-8');
                                 </button>
                                 <?php endif; ?>
                                 <?php if ($canEditPrinter): ?>
-                                <button class="action-btn edit-btn" onclick="openEditModal(<?= jsonForHtmlAttribute($data['info']) ?>)" title="Edit Printer">
+                                <button type="button" class="action-btn edit-btn" data-action="edit-printer" data-printer-info="<?= jsonForHtmlAttribute($data['info']) ?>" title="Edit Printer" aria-label="Edit Printer">
                                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                         <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -349,9 +377,9 @@ header('Content-Type: text/html; charset=utf-8');
     <?php endif; ?>
 
     <!-- Modal -->
-    <div id="printerModal" class="modal">
+    <div id="printerModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
         <div class="modal-content">
-            <span class="close-modal">&times;</span>
+            <button type="button" class="close-modal" aria-label="Close">&times;</button>
             <h2 id="modalTitle">Add Printer</h2>
             <form id="printerForm">
                 <input type="hidden" id="printerId" name="id">
@@ -400,7 +428,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <?php if ($canImportExport): ?>
                         <button type="button" id="exportBtn" class="secondary-btn" title="Export to JSON">Export</button>
                         <button type="button" id="importBtn" class="secondary-btn" title="Import from JSON">Import</button>
-                        <input type="file" id="importFile" accept=".json" style="display: none;">
+                        <input type="file" id="importFile" accept=".json" class="visually-hidden">
                         <?php endif; ?>
                     </div>
                     <?php if ($canAddPrinter || $canEditPrinter): ?>
@@ -413,10 +441,10 @@ header('Content-Type: text/html; charset=utf-8');
 
     <!-- Settings Modal -->
     <?php if ($canOpenSettings): ?>
-    <div id="settingsModal" class="modal">
+    <div id="settingsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <div class="modal-content settings-modal-content">
-            <span class="close-modal" id="closeSettingsModal">&times;</span>
-            <h2>⚙️ Settings</h2>
+            <button type="button" class="close-modal" id="closeSettingsModal" aria-label="Close">&times;</button>
+            <h2 id="settingsTitle">⚙️ Settings</h2>
             
             <div class="settings-layout">
                 <!-- Sidebar navigation -->
@@ -573,20 +601,18 @@ header('Content-Type: text/html; charset=utf-8');
     </div>
     <?php endif; ?>
 
-    <script>
-        window.__SPRINTER_BOOTSTRAP__ = {
-            settings: <?= jsonForInlineScript($settings) ?>,
-            floors: <?= jsonForInlineScript($floors) ?>,
-            csrfToken: <?= jsonForInlineScript(sprinterCsrfToken()) ?>,
-            currentUser: <?= jsonForInlineScript($currentUser ? sprinterPublicUser($currentUser) : null) ?>,
-            currentPermissions: <?= jsonForInlineScript($currentPermissions) ?>,
-            auth: {
-                csrfToken: <?= jsonForInlineScript(sprinterCsrfToken()) ?>,
-                currentUser: <?= jsonForInlineScript($currentUser ? sprinterPublicUser($currentUser) : null) ?>,
-                permissions: <?= jsonForInlineScript($currentPermissions) ?>
-            }
-        };
-    </script>
+    <script id="sprinterBootstrap" type="application/json"><?= jsonForInlineScript([
+        'settings' => $settings,
+        'floors' => $floors,
+        'csrfToken' => sprinterCsrfToken(),
+        'currentUser' => $currentUser ? sprinterPublicUser($currentUser) : null,
+        'currentPermissions' => $currentPermissions,
+        'auth' => [
+            'csrfToken' => sprinterCsrfToken(),
+            'currentUser' => $currentUser ? sprinterPublicUser($currentUser) : null,
+            'permissions' => $currentPermissions
+        ]
+    ]) ?></script>
     <script src="script.js"></script>
 </body>
 </html>

@@ -17,6 +17,7 @@ const db = read('src/Database.php');
 const api = read('src/api.php');
 const index = read('src/index.php');
 const js = read('src/script.js');
+const componentsCss = read('src/css/components.css');
 const modalsCss = read('src/css/modals.css');
 const projectAnalysis = read('docs/project-analysis.md');
 const researchDoc = read('docs/research-backed-fixes.md');
@@ -68,6 +69,8 @@ assert(index.includes('userCreateForm'), 'settings modal should include a user c
 assert(index.includes('data-permission'), 'user management UI should expose permission toggles.');
 assert(index.includes('can_import_export') && index.includes('can_manage_settings'), 'index.php should gate privileged UI with permissions.');
 assert(index.includes('logoutForm'), 'index.php should expose logout.');
+assert(index.includes('accountMenu') && index.includes('accountDropdown'), 'index.php should expose compact account menu markup.');
+assert(index.includes('changePasswordForm'), 'index.php should expose own-password change form.');
 
 // API authorization contracts.
 assert(api.includes("require_once 'Auth.php'"), 'api.php should load Auth.php.');
@@ -77,6 +80,7 @@ assert(api.includes('sprinterRequirePermission($currentUser'), 'api.php should e
 assert(api.includes("case 'get_users'"), 'api.php should expose get_users for main admin UI.');
 assert(api.includes("case 'create_user'"), 'api.php should expose create_user for main admin UI.');
 assert(api.includes("case 'update_user_permissions'"), 'api.php should expose update_user_permissions for main admin UI.');
+assert(api.includes("case 'change_own_password'"), 'api.php should expose change_own_password for current user password changes.');
 assert(/case 'add_printer':[\s\S]*can_add_printer/.test(api), 'add_printer should require can_add_printer.');
 assert(/case 'edit_printer':[\s\S]*can_edit_printer/.test(api), 'edit_printer should require can_edit_printer.');
 assert(/case 'delete_printer':[\s\S]*can_delete_printer/.test(api), 'delete_printer should require can_delete_printer.');
@@ -89,13 +93,19 @@ assert(/case 'save_settings':[\s\S]*can_manage_settings/.test(api), 'save_settin
 assert(js.includes('apiFetch'), 'script.js should centralize API fetches.');
 assert(js.includes('X-CSRF-Token'), 'script.js should send CSRF tokens in API requests.');
 assert(js.includes('hasPermission'), 'script.js should expose permission checks for UI behavior.');
+assert(js.includes('setupAccountMenu'), 'script.js should wire account menu before awaited initialization.');
+assert(/setupAccountMenu\(\);[\s\S]*await initializeAppData\(\)/.test(js), 'account menu should be wired before awaited app-data initialization.');
 assert(js.includes('setupUserManagement'), 'script.js should wire user management UI.');
 assert(js.includes('create_user'), 'script.js should call create_user for admin-created basic users.');
 assert(js.includes('update_user_permissions'), 'script.js should update user permission toggles.');
+assert(js.includes('change_own_password'), 'script.js should call change_own_password from the account menu.');
+assert(js.includes('setCsrfToken'), 'script.js should update the CSRF token after password rotation.');
+assert(js.includes('input[name="csrf_token"]'), 'script.js should update hidden CSRF form fields after password rotation.');
 assert(!/fetch\('api\.php|fetch\(`api\.php|fetch\("api\.php/.test(js), 'script.js should use apiFetch() instead of direct api.php fetch calls.');
 
 // CSS/docs contracts.
 assert(modalsCss.includes('auth-shell') && modalsCss.includes('user-management'), 'modals.css should style auth and user-management UI.');
+assert(componentsCss.includes('account-dropdown') && componentsCss.includes('account-role-badge'), 'components.css should style account dropdown and role badge UI.');
 assert(srcAgents.includes('Auth.php') && srcAgents.includes('users('), 'src/AGENTS.md should document auth helper and users schema.');
 assert(projectAnalysis.includes('Authentication') && projectAnalysis.includes('first-admin'), 'project-analysis.md should document auth status and first-admin flow.');
 assert(researchDoc.includes('Phase 4') && researchDoc.includes('Authentication'), 'research-backed-fixes.md should record auth research/phase.');

@@ -28,7 +28,7 @@ assert(!index.includes('function renderLevelsSectionHtml('), 'index.php should n
 assert(index.includes('data-initial-status'), 'index.php should expose initial level status as data for JS renderer.');
 assert(index.includes('data-initial-levels'), 'index.php should expose initial levels as data for JS renderer.');
 assert(index.includes('data-initial-last-levels'), 'index.php should expose last-known levels as data for JS renderer.');
-assert(index.includes('window.__SPRINTER_BOOTSTRAP__'), 'index.php should bootstrap settings/floors instead of forcing startup fetches.');
+assert(index.includes('id="sprinterBootstrap"') && index.includes('type="application/json"'), 'index.php should bootstrap settings/floors as inert JSON instead of forcing startup fetches.');
 
 assert(js.includes('hydrateInitialLevelSections'), 'script.js should hydrate initially rendered level sections.');
 assert(/function renderLevelsSection\s*\(\s*levelsSection\s*,\s*status\s*,\s*levels\s*,\s*lastLevels\s*\)/.test(js),

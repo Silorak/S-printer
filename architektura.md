@@ -418,7 +418,7 @@ Visi vartotojo kontroliuojami duomenys, atvaizduojami HTML kode, yra ekranuojami
 <?= htmlspecialchars($data['info']['full_name'] ?? 'N/A') ?>
 
 <!-- Atributams su JSON duomenimis -->
-onclick="openEditModal(<?= htmlspecialchars(json_encode($data['info'])) ?>)"
+data-printer-info="<?= jsonForHtmlAttribute($data['info']) ?>"
 ```
 
 ---
@@ -641,7 +641,7 @@ X-XSS-Protection: 1; mode=block     — Senasis XSS filtras
 Referrer-Policy: same-origin         — Riboja nukreipimo informacijos nutekėjimą
 Content-Security-Policy:             — Valdo resursų įkrovimą:
   default-src 'self';                  Tik tos pačios kilmės resursai
-  script-src 'self' 'unsafe-inline';   Scenarijai iš tos pačios kilmės
+  script-src 'self';                   Scenarijai tik iš tos pačios kilmės; be inline scenarijų
   style-src 'self' 'unsafe-inline';    Stiliai iš tos pačios kilmės
   img-src 'self' data:;               Paveikslėliai ir data: URI
   connect-src 'self'                   AJAX tik į tą pačią kilmę

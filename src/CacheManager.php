@@ -24,7 +24,7 @@ class CacheManager {
         // Create the cache folder if it doesn't exist
         if (!file_exists($this->cacheDir)) {
             // Use @ to hide warnings if we don't have permission
-            @mkdir($this->cacheDir, 0777, true);
+            @mkdir($this->cacheDir, 0775, true);
         }
     }
     
@@ -85,7 +85,7 @@ class CacheManager {
         }
         
         // Write to file
-        $result = @file_put_contents($cacheFile, $jsonData);
+        $result = @file_put_contents($cacheFile, $jsonData, LOCK_EX);
         return $result !== false;
     }
     

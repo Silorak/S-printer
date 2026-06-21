@@ -364,6 +364,180 @@
     transform: rotate(45deg);
 }
 
+/* Account Menu */
+.account-menu {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.account-button {
+    width: 40px;
+    height: 40px;
+    border: 1px solid rgba(127, 187, 179, 0.25);
+    border-radius: 50%;
+    background: rgba(127, 187, 179, 0.08);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: transform 0.2s var(--ease), background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+
+.account-button:hover,
+.account-button[aria-expanded="true"] {
+    background: rgba(127, 187, 179, 0.18);
+    border-color: rgba(127, 187, 179, 0.45);
+}
+
+.account-button:active {
+    transform: scale(0.94);
+}
+
+.account-dropdown {
+    position: absolute;
+    top: calc(100% + 0.6rem);
+    right: 0;
+    width: min(310px, calc(100vw - 2rem));
+    padding: 0.75rem;
+    background: rgba(55, 64, 69, 0.98);
+    border: 1px solid rgba(127, 187, 179, 0.25);
+    border-radius: 14px;
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.38);
+    z-index: 2500;
+}
+
+.account-dropdown[hidden],
+.account-password-form[hidden] {
+    display: none;
+}
+
+.light-theme .account-dropdown {
+    background: rgba(233, 229, 207, 0.98);
+    border-color: rgba(141, 161, 1, 0.24);
+    box-shadow: 0 16px 34px rgba(0, 0, 0, 0.16);
+}
+
+.account-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.35rem 0.35rem 0.75rem;
+    border-bottom: 1px solid rgba(127, 187, 179, 0.16);
+    margin-bottom: 0.5rem;
+}
+
+.account-avatar {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, var(--primary), var(--secondary));
+    color: var(--bg);
+    font-weight: 800;
+    letter-spacing: 0.02em;
+}
+
+.account-identity {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.account-identity strong {
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.account-role-badge {
+    width: fit-content;
+    margin-top: 0.2rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(127, 187, 179, 0.16);
+    color: var(--primary);
+}
+
+.account-role-badge.admin {
+    background: rgba(214, 153, 182, 0.18);
+    color: var(--secondary);
+}
+
+.account-menu-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.65rem 0.7rem;
+    border: none;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+}
+
+.account-menu-row:hover {
+    background: rgba(127, 187, 179, 0.12);
+}
+
+.account-menu-row.danger-row {
+    color: #e06c75;
+}
+
+.account-password-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    padding: 0.6rem 0.35rem 0.75rem;
+}
+
+.account-password-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+}
+
+.account-password-form input {
+    border: 1px solid rgba(127, 187, 179, 0.22);
+    border-radius: 8px;
+    background: var(--input-bg);
+    color: var(--fg);
+    padding: 0.55rem 0.65rem;
+}
+
+.account-save-password {
+    width: 100%;
+    padding: 0.62rem 0.8rem;
+}
+
+.account-status {
+    min-height: 1rem;
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.account-status.success {
+    color: var(--primary);
+}
+
+.account-status.error {
+    color: #e06c75;
+}
+
 /* Action Buttons */
 .action-btn {
     background: transparent;
