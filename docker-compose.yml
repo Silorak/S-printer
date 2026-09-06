@@ -1,0 +1,43 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - ./src:/var/www/html
+    environment:
+      - SNMP_COMMUNITY=public
+      # Background poller daemon: refreshes cached data + runs the alert
+      # engine. Configure alerts in the web UI: Settings -> Alerts.
+      - POLLING_ENABLED=1
+      # (error display/logging is hardened inside the image:
+      #  display_errors=Off, log_errors=On)
+      - DB_HOST=db
+      - DB_NAME=sprinter
+      - DB_USER=sprinter
+      - DB_PASS=sprinter_password
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: mariadb:10.6
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=sprinter
+      - MYSQL_USER=sprinter
+      - MYSQL_PASSWORD=sprinter_password
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      # Official MariaDB healthcheck script: true "ready for connections"
+      # state (mysqladmin ping alone can pass too early during init).
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  db_data:

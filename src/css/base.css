@@ -1,0 +1,306 @@
+/*
+ * Sprinter - Base Stylesheet
+ *
+ * Contains:
+ * - CSS Reset/Fallbacks
+ * - Design Tokens (spacing, type, radii, z-index, motion)
+ * - Theme Variables (Dark/Light)
+ * - Basic Element Styles
+ *
+ * Token guide:
+ * - Spacing uses a 4px grid: 0.25 / 0.5 / 0.75 / 1 / 1.25 / 1.5 / 2 / 3 (rem)
+ * - Type scale: 0.75 / 0.875 / 1 / 1.125 / 1.375 / 1.75 / 2.25 rem
+ * - Radii: 4 / 8 / 12 px + pill
+ * - All text/background pairs meet WCAG AA (4.5:1), UI indicators 3:1.
+ *   Secondary text uses SOLID colors, not opacity: no opacity value on these
+ *   surfaces reaches 4.5:1 while still looking "secondary".
+ */
+
+/* ==================== FALLBACKS ==================== */
+
+@supports not (backdrop-filter: blur(6px)) {
+    .header {
+        background: rgba(55, 64, 69, 0.95);
+    }
+
+    .light-theme .header {
+        background: rgba(233, 229, 207, 0.95);
+    }
+}
+
+/* ==================== DESIGN TOKENS ==================== */
+
+:root {
+    /* spacing (4px grid) */
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: 0.75rem;
+    --space-4: 1rem;
+    --space-5: 1.25rem;
+    --space-6: 1.5rem;
+    --space-8: 2rem;
+    --space-12: 3rem;
+
+    /* type scale */
+    --text-xs: 0.75rem;
+    --text-sm: 0.875rem;
+    --text-md: 1rem;
+    --text-lg: 1.125rem;
+    --text-xl: 1.375rem;
+    --text-2xl: 1.75rem;
+    --text-3xl: 2.25rem;
+
+    /* radii */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-pill: 999px;
+
+    /* motion */
+    --ease: cubic-bezier(0.4, 0, 0.2, 1);
+    --dur-fast: 0.2s;
+    --dur: 0.3s;
+    --blur: 8px;
+
+    /* z-index scale */
+    --z-card: 1;
+    --z-fab: 50;
+    --z-header: 100;
+    --z-overlay: 1000;
+    --z-modal: 2000;
+
+    /* Everforest Dark Theme (Default) */
+    --bg: #2d353b;
+    --fg: #d3c6aa;
+    --primary: #7fbbb3;          /* accent: borders, icons, filled buttons */
+    --primary-text: #99cfc6;     /* accent for TEXT/icons on surfaces (4.6:1 on cube) */
+    --on-primary: #2d353b;       /* text on filled accent buttons (7.2:1) */
+    --secondary: #d699b6;
+    --cube-bg: #475258;
+    --black: #4b565c;
+    --embed-bg: #3a4248;
+    --header-bg: #374045;
+    --header-border: #475258;
+    --border: rgba(127, 187, 179, 0.3);
+    --input-bg: rgba(255, 255, 255, 0.05);
+    --text-secondary: #cfc3a6;   /* solid secondary text (4.6:1 on cube) */
+    --placeholder: #b3ab9a;      /* 4.7:1 on header */
+    --hover-soft: rgba(127, 187, 179, 0.12);
+    --hover-strong: rgba(127, 187, 179, 0.2);
+    --ok-text: #aad086;          /* success text (4.6:1 on cube) */
+    --err-text: #fbbabc;         /* error text (4.9:1 on cube) */
+    --status-online: #98bb6e;    /* indicator dot (3.7:1 on cube, UI 3:1 ok) */
+    --status-offline: #f08c8e;   /* indicator dot (3.4:1 on cube, UI 3:1 ok) */
+    --fill-black: #74868f;       /* "black" toner bar (3.3:1 vs bar track) */
+    --fill-cyan: #7fbbb3;
+    --fill-magenta: #d699b6;
+    --fill-yellow: #dbbc7f;
+    --focus-ring: #99cfc6;
+    --scrollbar-thumb: #56636b;      /* visible on dark bg */
+    --scrollbar-thumb-hover: #6b7a84;
+}
+
+.light-theme {
+    --scrollbar-thumb: #c9c3ab;      /* visible on cream bg */
+    --scrollbar-thumb-hover: #b5ad92;
+}
+
+/* Everforest Light Theme */
+.light-theme {
+    --bg: #f8f0dc;
+    --fg: #535f66;               /* darkened: 5.2:1 on cube (was 4.4:1) */
+    --primary: #8da101;
+    --primary-text: #556800;     /* dark olive: 4.9:1 on cube (was 2.3:1) */
+    --on-primary: #1d2325;       /* text on filled accent buttons (5.5:1) */
+    --secondary: #df69ba;
+    --cube-bg: #e9e5cf;
+    --black: #5c6a72;
+    --embed-bg: #e6e2d0;
+    --header-bg: #e9e5cf;
+    --header-border: #d8d3c0;
+    --border: rgba(141, 161, 1, 0.3);
+    --input-bg: rgba(0, 0, 0, 0.03);
+    --text-secondary: #57626a;   /* solid secondary text (4.9:1 on cube) */
+    --placeholder: #57626a;      /* 4.9:1 on header */
+    --hover-soft: rgba(141, 161, 1, 0.12);
+    --hover-strong: rgba(141, 161, 1, 0.2);
+    --ok-text: #4a7019;          /* 4.6:1 on cube */
+    --err-text: #a52f2f;         /* 5.4:1 on cube */
+    --status-online: #527a1e;    /* indicator dot (4.0:1 on cube) */
+    --status-offline: #b33636;   /* indicator dot (4.7:1 on cube) */
+    --fill-black: #5d6f79;       /* 4.6:1 vs bar track */
+    --fill-cyan: #2d8a65;        /* 3.8:1 vs bar track */
+    --fill-magenta: #bd4a8e;     /* 4.1:1 vs bar track */
+    --fill-yellow: #a87b00;      /* 3.4:1 vs bar track */
+    --focus-ring: #556800;
+}
+
+/* ==================== RESET & BASE ==================== */
+
+html {
+    background: var(--bg);
+    min-height: 100%;
+    /* reserve the scrollbar gutter so the layout never jumps when a
+       scrollbar appears/disappears between pages */
+    scrollbar-gutter: stable;
+}
+
+/* Seamless theming: thin, quiet scrollbars that match the Everforest
+   palette. Firefox uses scrollbar-width/color; Chromium/Safari the
+   ::-webkit-scrollbar rules below. Scrolling itself is untouched. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: var(--radius-pill);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+body {
+    background: var(--bg);
+    color: var(--fg);
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+    box-sizing: border-box;
+}
+
+/* Horizontal gutters live here (body padding is zero so the header
+   can be full-bleed and position: sticky). */
+.main-layout {
+    padding-left: var(--space-5);
+    padding-right: var(--space-5);
+}
+
+h1 {
+    text-align: center;
+    margin: var(--space-12) 0 var(--space-8);
+    font-size: var(--text-3xl);
+    color: var(--primary-text);
+}
+
+/* ==================== DIALOG SCROLL LOCK ==================== */
+
+/* While a modal/drawer is open, freeze the page behind it so wheel and
+   touch scrolling only affect the dialog. Pure CSS - unlocks on close. */
+body:has(.modal.show) {
+    overflow: hidden;
+}
+
+/* ==================== KEYBOARD FOCUS (visible, consistent) ==================== */
+
+/* Mouse clicks: no outline (inputs keep their ring via :focus box-shadow). */
+:focus {
+    outline: none;
+}
+
+/* Keyboard focus: clear, consistent ring everywhere, hugging the element. */
+:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 0;
+}
+
+/* ==================== REDUCED MOTION ==================== */
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .cube:hover,
+    .buy-button:hover,
+    .refresh-button:hover {
+        transform: none;
+    }
+}
+
+/* ==================== LIGHT THEME OVERRIDES ==================== */
+
+.light-theme .header {
+    background: rgba(233, 229, 207, 0.85);
+    backdrop-filter: blur(var(--blur));
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.1);
+    background: linear-gradient(to right,
+            rgba(233, 229, 207, 0.9),
+            rgba(233, 229, 207, 0.7));
+}
+
+.light-theme .site-name {
+    color: var(--primary-text);
+}
+
+.light-theme .site-subtitle {
+    color: var(--fg);
+}
+
+.light-theme #printerSearch {
+    background: rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    color: var(--fg);
+}
+
+.light-theme #printerSearch::placeholder {
+    color: var(--placeholder);
+}
+
+.light-theme #printerSearch:focus {
+    border-color: var(--primary);
+}
+
+.light-theme #printerSearch:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.light-theme .buy-button {
+    background-color: var(--primary);
+    color: var(--on-primary);
+}
+
+.light-theme .buy-button:hover {
+    filter: brightness(110%);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.light-theme .cube {
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.light-theme .cube:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+/* Autofill styles for light theme */
+.light-theme input:-webkit-autofill,
+.light-theme input:-webkit-autofill:hover,
+.light-theme input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 30px #f1efe3 inset !important;
+    -webkit-text-fill-color: #535f66 !important;
+}

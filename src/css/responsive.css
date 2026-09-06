@@ -1,0 +1,519 @@
+/*
+ * Sprinter - Responsive Stylesheet
+ * 
+ * Contains:
+ * - Media Queries
+ * - Mobile Adjustments
+ * - Animations
+ */
+
+/* ==================== ANIMATIONS ==================== */
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes float {
+
+    0%,
+    100% {
+        transform: translateY(0) translateX(0);
+    }
+
+    25% {
+        transform: translateY(-3px) translateX(2px);
+    }
+
+    50% {
+        transform: translateY(-1px) translateX(-2px);
+    }
+
+    75% {
+        transform: translateY(-4px) translateX(1px);
+    }
+}
+
+/* Cube stagger animation on initial load */
+.cube {
+    animation: fade-in 0.5s var(--ease) forwards;
+    /* Smooth transition for floor filtering */
+    transition: opacity 0.3s var(--ease), transform 0.3s var(--ease);
+}
+
+/* Staggered entrance delays */
+.cube:nth-child(1) {
+    animation-delay: 0.05s;
+}
+
+.cube:nth-child(2) {
+    animation-delay: 0.1s;
+}
+
+.cube:nth-child(3) {
+    animation-delay: 0.15s;
+}
+
+.cube:nth-child(4) {
+    animation-delay: 0.2s;
+}
+
+.cube:nth-child(5) {
+    animation-delay: 0.25s;
+}
+
+.cube:nth-child(6) {
+    animation-delay: 0.3s;
+}
+
+.cube:nth-child(7) {
+    animation-delay: 0.35s;
+}
+
+.cube:nth-child(8) {
+    animation-delay: 0.4s;
+}
+
+.cube:nth-child(9) {
+    animation-delay: 0.45s;
+}
+
+.cube:nth-child(10) {
+    animation-delay: 0.5s;
+}
+
+/* Hidden state for floor filtering (GPU-accelerated) */
+.cube.hidden-by-filter {
+    opacity: 0;
+    transform: scale(0.95);
+    pointer-events: none;
+    position: absolute;
+    visibility: hidden;
+}
+
+/* Visible state (from hidden) */
+.cube.visible-by-filter {
+    animation: cube-reveal 0.6s var(--ease) forwards;
+}
+
+@keyframes cube-reveal {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+/* ==================== THEME TOGGLE ==================== */
+
+.theme-toggle-container {
+    display: flex;
+    align-items: center;
+    margin-left: 0.5rem;
+}
+
+/* ==================== THEME TOGGLE ==================== */
+/* Slim flat track + knob that pops slightly out of it. The invisible
+   border keeps the touch target 72x44 while the visible track is 48x20. */
+.theme-toggle {
+    position: relative;
+    box-sizing: border-box;
+    width: 72px;
+    height: 44px;
+    border: 12px solid transparent;
+    background-clip: padding-box;
+    border-radius: var(--radius-pill);
+    background: #3d464b;
+    cursor: pointer;
+    padding: 0;
+    transition: background var(--dur) var(--ease);
+    overflow: visible;
+}
+
+.theme-toggle:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+}
+
+.theme-toggle-knob {
+    position: absolute;
+    top: 50%;
+    left: -3px;
+    transform: translateY(-50%);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: var(--on-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    transition: transform var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+
+.theme-toggle-knob svg {
+    width: 13px;
+    height: 13px;
+}
+
+/* dark mode: moon in the knob */
+.theme-toggle-icon-sun { display: none; }
+.theme-toggle-icon-moon { display: block; }
+
+/* light mode: lime track, cream knob with the sun */
+.light-theme .theme-toggle {
+    background: var(--primary);
+}
+.light-theme .theme-toggle-knob {
+    background: #fdfbf4;
+    color: #c99a2e;
+    transform: translate(22px, -50%);
+}
+.light-theme .theme-toggle-icon-moon { display: none; }
+.light-theme .theme-toggle-icon-sun { display: block; }
+
+.theme-toggle:hover .theme-toggle-knob {
+    transform: translateY(-50%) scale(1.07);
+}
+.light-theme .theme-toggle:hover .theme-toggle-knob {
+    transform: translate(22px, -50%) scale(1.07);
+}
+
+/* ==================== FAB BUTTON ==================== */
+/* Base FAB styles live in components.css; size overrides are in the
+   media queries below. */
+
+/* ==================== MOBILE: FLOOR SIDEBAR AS PILLS ==================== */
+
+@media (max-width: 1024px) {
+    .floor-sidebar {
+        width: 150px;
+        min-width: 150px;
+    }
+
+    .floor-item {
+        padding: 0.5rem 0.6rem;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 768px) {
+    /* Header is sticky/in-flow: no top compensation needed anywhere.
+       Side gutters come from .main-layout, not body padding. */
+    body {
+        padding: 0;
+    }
+
+    .main-layout {
+        padding-left: 0.625rem;
+        padding-right: 0.625rem;
+    }
+
+    .header {
+        padding: 0.5rem 1rem;
+        flex-direction: column;
+        height: auto;
+    }
+
+    .logo-wrapper {
+        margin: 0 auto 0.5rem;
+        padding-bottom: 0;
+    }
+
+    .search-container {
+        width: 100%;
+        flex-grow: 0;
+        max-width: 100%;
+        margin: 0.5rem 0;
+    }
+
+    .header-controls {
+        width: 100%;
+        justify-content: flex-end;
+        gap: var(--space-4);
+    }
+
+    h1 {
+        font-size: var(--text-2xl);
+        margin-top: var(--space-6);
+    }
+
+    .container {
+        padding: 0 0.5rem;
+        gap: 1rem;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
+
+    .fab {
+        bottom: var(--space-5);
+        right: var(--space-5);
+        width: 54px;
+        height: 54px;
+        font-size: 1.625rem;
+    }
+
+    .main-layout {
+        flex-direction: column;
+    }
+
+    .content-with-sidebar {
+        flex-direction: column;
+    }
+
+    .floor-sidebar {
+        position: relative;
+        top: 0;
+        width: 100%;
+        min-width: 100%;
+        max-height: none;
+        padding: 0.5rem 1rem;
+        margin-bottom: 1rem;
+        margin-top: 0;
+        border-right: none;
+    }
+
+    .floor-nav {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .floor-item {
+        padding: 0.5rem var(--space-3);
+        font-size: var(--text-sm);
+        border-radius: var(--radius-pill);
+        background: var(--hover-soft);
+    }
+
+    .floor-item.active {
+        background: var(--primary);
+        color: var(--on-primary);
+    }
+
+    .floor-icon {
+        display: none;
+    }
+
+    .settings-btn {
+        margin-right: 0.25rem;
+    }
+
+    .refresh-panel {
+        flex-direction: column;
+        gap: 0.5rem;
+        align-items: center;
+    }
+
+    .actions-menu {
+        opacity: 1;
+    }
+
+    /* Settings modal on mobile */
+    .settings-layout {
+        flex-direction: column;
+    }
+
+    .settings-nav {
+        flex-direction: row;
+        min-width: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        padding-right: 0;
+        /* keep focus rings visible inside the horizontal scroll area */
+        padding-top: 2px;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+        overflow-x: auto;
+    }
+
+    .settings-nav-item {
+        white-space: nowrap;
+        font-size: var(--text-sm);
+    }
+
+    /* field rows stack vertically on narrow screens */
+    .settings-row {
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .settings-row .settings-field[style] {
+        max-width: none;
+    }
+}
+
+@media (max-width: 480px) {
+    body {
+        padding: 0;
+    }
+
+    .main-layout {
+        padding-left: var(--space-2);
+        padding-right: var(--space-2);
+    }
+
+    .header {
+        padding: 0.5rem 0.75rem;
+        padding-bottom: 0.8rem;
+    }
+
+    h1 {
+        font-size: var(--text-xl);
+        margin-top: var(--space-4);
+    }
+
+    .ink-logo {
+        width: 38px;
+        height: 38px;
+    }
+
+    .site-name {
+        font-size: var(--text-lg);
+    }
+
+    .site-subtitle {
+        font-size: var(--text-xs);
+    }
+
+    .container {
+        gap: 0.5rem;
+    }
+
+    .cube {
+        padding: 1rem;
+    }
+
+    .level-label {
+        font-size: var(--text-xs);
+    }
+
+    .level-container {
+        height: 0.75rem;
+    }
+
+    .modal-content {
+        margin: 5% auto;
+        padding: 1.5rem;
+        width: 95%;
+        margin-bottom: 1rem;
+    }
+
+    .close-modal {
+        font-size: var(--text-xl);
+    }
+
+    .form-group {
+        margin-bottom: 1.25rem;
+    }
+
+    .form-group label {
+        font-size: var(--text-sm);
+    }
+
+    .form-group input {
+        padding: 0.625rem;
+        font-size: var(--text-md);
+    }
+
+    .input-group {
+        flex-direction: column;
+        gap: 0.75rem;
+    }
+
+    .input-group input {
+        width: 100%;
+    }
+
+    .secondary-btn {
+        padding: 0.6rem var(--space-3);
+        font-size: var(--text-sm);
+    }
+
+    .form-actions {
+        flex-direction: column;
+        gap: 1rem;
+    }
+
+    .fab {
+        bottom: var(--space-4);
+        right: var(--space-4);
+        width: 50px;
+        height: 50px;
+        font-size: var(--text-lg);
+    }
+
+    #printerSearch {
+        min-width: unset;
+        font-size: var(--text-sm);
+    }
+
+    .floor-item {
+        padding: 0.25rem var(--space-3);
+        font-size: var(--text-xs);
+    }
+}
+
+@media (max-width: 320px) {
+    body {
+        padding: 0;
+    }
+
+    .main-layout {
+        padding-left: var(--space-1);
+        padding-right: var(--space-1);
+    }
+
+    h1 {
+        font-size: var(--text-xl);
+        margin-top: var(--space-4);
+    }
+
+    .header {
+        padding: 0.5rem 0.5rem 0.8rem;
+    }
+
+    .ink-logo {
+        width: 32px;
+        height: 32px;
+    }
+
+    .site-name {
+        font-size: 1rem;
+    }
+
+    .cube {
+        padding: 0.75rem;
+    }
+
+    .fab {
+        bottom: var(--space-2);
+        right: var(--space-2);
+        width: 44px;
+        height: 44px;
+        font-size: var(--text-lg);
+    }
+
+    .modal-content {
+        margin: 2% auto;
+        padding: 1rem;
+    }
+}
